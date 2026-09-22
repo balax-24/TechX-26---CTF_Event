@@ -13,6 +13,7 @@ import { checkRedisHealth } from './cache/redis.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { teamRoutes } from './modules/teams/teams.routes.js';
 import { challengeRoutes } from './modules/challenges/challenges.routes.js';
+import { dynamicChallengeRoutes } from './modules/dynamic_challenges/dynamic_challenges.routes.js';
 import { categoryRoutes } from './modules/categories/categories.routes.js';
 import { submissionRoutes } from './modules/submissions/submissions.routes.js';
 import { checkpointRoutes } from './modules/checkpoints/checkpoints.routes.js';
@@ -22,6 +23,7 @@ import { competitionRoutes } from './modules/competition/competition.routes.js';
 import { sseManager } from './modules/realtime/sse.manager.js';
 import { outboxWorker } from './modules/realtime/outbox.worker.js';
 import { redisSubscriber } from './modules/realtime/redis.subscriber.js';
+import { instanceCleanupWorker } from './modules/dynamic_challenges/cleanup.worker.js';
 
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -168,6 +170,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(authRoutes, { prefix: '/api/v1/auth' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
   await app.register(challengeRoutes, { prefix: '/api/v1/challenges' });
+  await app.register(dynamicChallengeRoutes, { prefix: '/api/v1/challenges' });
   await app.register(categoryRoutes, { prefix: '/api/v1/categories' });
   await app.register(submissionRoutes, { prefix: '/api/v1/submissions' });
   await app.register(checkpointRoutes, { prefix: '/api/v1/checkpoints' });
@@ -180,6 +183,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     sseManager.closeAll();
     await redisSubscriber.stop();
     outboxWorker.stop();
+    instanceCleanupWorker.stop();
   });
 
   return app;

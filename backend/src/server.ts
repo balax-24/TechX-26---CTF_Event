@@ -6,15 +6,17 @@ import { closeRedis } from './cache/redis.js';
 import { outboxWorker } from './modules/realtime/outbox.worker.js';
 import { redisSubscriber } from './modules/realtime/redis.subscriber.js';
 import { sseManager } from './modules/realtime/sse.manager.js';
+import { instanceCleanupWorker } from './modules/dynamic_challenges/cleanup.worker.js';
 
 async function startServer() {
   try {
     const app = await buildApp();
 
-    // 1. Initialize Real-Time Outbox Worker & Redis Subscriber
+    // 1. Initialize Real-Time Outbox Worker, Redis Subscriber, and Dynamic Challenge Cleanup Worker
     outboxWorker.start();
     await redisSubscriber.start();
     sseManager.startHeartbeat();
+    instanceCleanupWorker.start();
 
     const address = await app.listen({
       port: config.APP_PORT,
@@ -38,10 +40,11 @@ async function startServer() {
         logger.warn({ signal }, 'Shutdown signal received, closing connections gracefully...');
 
         try {
-          // 1. Stop real-time engine components
+          // 1. Stop real-time engine components and cleanup worker
           sseManager.closeAll();
           await redisSubscriber.stop();
           outboxWorker.stop();
+          instanceCleanupWorker.stop();
 
           // 2. Close HTTP server
           await app.close();

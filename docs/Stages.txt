@@ -545,3 +545,34 @@ Completed targeted security, realtime, and reliability hardening pass over Stage
    - **Frontend**: 10 test files, 43 tests passing (100% success rate).
    - **Total**: 44 test files, 296 tests passing.
    - **Build**: Both backend and frontend production builds pass with 0 errors. Zero secrets in frontend bundle.
+
+================================================================================
+STAGE 8: DYNAMIC CHALLENGE INFRASTRUCTURE, CONTAINER ISOLATION & LIFECYCLE MANAGEMENT — IMPLEMENTED
+================================================================================
+Built production-grade, secure dynamic challenge infrastructure for TechX CTF 2026:
+1. **Server-Authoritative Challenge Registry**:
+   - Participants can never select arbitrary Docker images, tags, commands, environment variables, or resource limits.
+   - Server-controlled manifest enforces valid image formats, strict memory bounds (16MB-1024MB), CPU quotas (<= 2.0 vCPUs), PID limits (10-500), and finite TTLs (60s-7200s).
+   - Explicit platform secret prohibition ensures keys like `JWT_SECRET`, `DATABASE_URL`, and `REDIS_PASSWORD` are never passed into challenge containers.
+2. **Hardened Container Security Baseline**:
+   - Mandatory `no-new-privileges: true`, `cap_drop: ['ALL']`, `privileged: false`.
+   - Read-only root filesystem with bounded in-memory `tmpfs` mounts (`/tmp: rw,noexec,nosuid,size=32m`).
+   - Host namespaces (`network_mode: host`, `pid: host`, `ipc: host`) strictly disallowed.
+   - Docker socket (`/var/run/docker.sock`) is never mounted into challenge containers.
+3. **Strict Network & Upstream Isolation (Zero SSRF)**:
+   - Dynamic challenges run on dedicated `ctf_challenges_net` with no access to `ctf_core_net` (PostgreSQL and Redis).
+   - Authorized reverse proxy gateway (`/api/v1/challenges/:slug/instance/proxy/*`) routes traffic strictly to the verified database instance IP and port. Arbitrary query targets (`target=`, `url=`, `host=`) are completely rejected.
+4. **Database State Machine & Concurrency Control**:
+   - `challenge_instances` table models states: `CREATING`, `RUNNING`, `STOPPING`, `STOPPED`, `EXPIRED`, `FAILED`.
+   - Invariant partial unique index `idx_challenge_instances_team_chal_active` prevents multiple concurrent active instances per team per challenge.
+   - Idempotent start/reset/stop operations; global team quota (max 2 active instances per team) and global platform capacity cap.
+5. **Background TTL Worker & Orphan Reaper**:
+   - Periodic cleanup worker reaps TTL-expired instances automatically.
+   - Reconciles orphaned Docker containers tagged with `techx.managed=true` lacking valid database ownership.
+   - Automatically detects externally crashed or killed containers and transitions state to `FAILED`.
+6. **Verification & Testing**:
+   - **Stage 8 Unit Tests**: 8 test files, 27 tests passing (100% success rate).
+   - **Backend Regression**: 42 test files, 280 tests passing (100% success rate, 0 regressions).
+   - **Frontend Regression**: 10 test files, 43 tests passing (100% success rate).
+   - **Total Monorepo Tests**: 52 test files, 323 tests passing.
+   - **Build**: Both backend and frontend production builds pass with 0 errors.

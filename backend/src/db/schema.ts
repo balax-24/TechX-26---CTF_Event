@@ -379,4 +379,42 @@ export const adminIdempotencyKeys = pgTable('admin_idempotency_keys', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// -----------------------------------------------------------------------------
+// 19. DYNAMIC CHALLENGE INSTANCES (Stage 8)
+// -----------------------------------------------------------------------------
+export const challengeInstances = pgTable(
+  'challenge_instances',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    challengeId: uuid('challenge_id').notNull().references(() => challenges.id, { onDelete: 'cascade' }),
+    teamId: uuid('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id),
+    status: varchar('status', { length: 20 }).notNull().default('CREATING'), // 'CREATING', 'RUNNING', 'STOPPING', 'STOPPED', 'EXPIRED', 'FAILED'
+    containerId: varchar('container_id', { length: 64 }),
+    containerName: varchar('container_name', { length: 128 }).notNull(),
+    internalIp: varchar('internal_ip', { length: 45 }),
+    internalPort: integer('internal_port').notNull(),
+    accessToken: varchar('access_token', { length: 64 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    stoppedAt: timestamp('stopped_at', { withTimezone: true }),
+    failureReason: text('failure_reason'),
+    instanceMetadata: jsonb('instance_metadata').default({}),
+  },
+  (table) => ({
+    chalInstActiveUnique: uniqueIndex('idx_challenge_instances_team_chal_active')
+      .on(table.teamId, table.challengeId)
+      .where(sql`status IN ('CREATING', 'RUNNING', 'STOPPING')`),
+    chalInstTeamIdx: index('idx_challenge_instances_team_id').on(table.teamId),
+    chalInstContainerIdx: index('idx_challenge_instances_container_id').on(table.containerId),
+    chalInstExpiresStatusIdx: index('idx_challenge_instances_expires_status').on(table.expiresAt, table.status),
+  })
+);
+
+export type ChallengeInstance = typeof challengeInstances.$inferSelect;
+export type NewChallengeInstance = typeof challengeInstances.$inferInsert;
+
+
 

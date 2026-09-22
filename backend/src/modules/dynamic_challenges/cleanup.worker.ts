@@ -3,6 +3,7 @@ import { db } from '../../db/index.js';
 import { challengeInstances } from '../../db/schema.js';
 import { getDockerManager } from './docker.manager.js';
 import { dynamicChallengesService } from './dynamic_challenges.service.js';
+import { competitionService } from '../competition/competition.service.js';
 import { auditService } from '../admin/audit.service.js';
 import { logger } from '../../utils/logger.js';
 
@@ -36,6 +37,7 @@ export class InstanceCleanupWorker {
 
   /**
    * Main reconciliation routine:
+   * 0. Auto-expires all containers if competition has ended/archived
    * 1. Reaps TTL-expired instances
    * 2. Reaps orphaned Docker containers (containers without active DB record)
    * 3. Reconciles crashed Docker containers (DB says RUNNING but container is dead)
@@ -55,6 +57,31 @@ export class InstanceCleanupWorker {
     let crashesReconciled = 0;
 
     try {
+      // -----------------------------------------------------------------------
+      // 0. COMPETITION-END AUTO CLEANUP
+      // -----------------------------------------------------------------------
+      try {
+        const compState = await competitionService.getCompetitionState();
+        if (compState && (compState.state === 'ended' || compState.state === 'archived')) {
+          const allActive = await db
+            .select({ id: challengeInstances.id })
+            .from(challengeInstances)
+            .where(inArray(challengeInstances.status, ['CREATING', 'RUNNING']));
+
+          for (const inst of allActive) {
+            try {
+              await dynamicChallengesService.expireInstance(inst.id);
+              expiredCount++;
+            } catch (err: any) {
+              logger.warn({ err: err.message, instanceId: inst.id }, 'Failed to expire instance on competition end');
+            }
+          }
+          return { expiredCount, orphansReaped: 0, crashesReconciled: 0 };
+        }
+      } catch (compErr: any) {
+        logger.warn({ err: compErr.message }, 'Unable to verify competition state in cleanup worker');
+      }
+
       // -----------------------------------------------------------------------
       // 1. REAP TTL-EXPIRED INSTANCES
       // -----------------------------------------------------------------------
@@ -96,27 +123,40 @@ export class InstanceCleanupWorker {
 
       // 2a. Find Docker containers with no matching active DB instance (orphans)
       for (const container of managedContainers) {
-        const instIdLabel = container.labels['techx.instance_id'];
-        const matchesDb =
-          activeContainerIdMap.has(container.containerId) ||
-          (instIdLabel && activeInstanceIdMap.has(instIdLabel));
+        try {
+          const labels = container.labels || {};
+          // Strict trust boundary: only touch containers with trusted management labels
+          if (labels['techx.managed'] !== 'true') {
+            continue;
+          }
+          if (labels['techx.component'] && labels['techx.component'] !== 'ctf-challenge') {
+            continue;
+          }
 
-        if (!matchesDb) {
-          logger.warn(
-            { containerId: container.containerId, name: container.containerName },
-            'Reaping orphaned Docker container'
-          );
-          await dockerManager.stopAndRemoveContainer(container.containerId).catch(() => {});
-          orphansReaped++;
+          const instIdLabel = labels['techx.instance_id'];
+          const matchesDb =
+            activeContainerIdMap.has(container.containerId) ||
+            (instIdLabel && activeInstanceIdMap.has(instIdLabel));
 
-          await auditService.record({
-            actorRole: 'system',
-            actorIp: '127.0.0.1',
-            action: 'challenge_instance_orphan_reaped',
-            entityType: 'docker_container',
-            entityId: container.containerId,
-            detailsJson: { containerName: container.containerName, labels: container.labels },
-          });
+          if (!matchesDb) {
+            logger.warn(
+              { containerId: container.containerId, name: container.containerName },
+              'Reaping orphaned Docker container'
+            );
+            await dockerManager.stopAndRemoveContainer(container.containerId).catch(() => {});
+            orphansReaped++;
+
+            await auditService.record({
+              actorRole: 'system',
+              actorIp: '127.0.0.1',
+              action: 'challenge_instance_orphan_reaped',
+              entityType: 'docker_container',
+              entityId: container.containerId,
+              detailsJson: { containerName: container.containerName, labels: container.labels },
+            });
+          }
+        } catch (reapErr: any) {
+          logger.error({ err: reapErr.message, containerId: container.containerId }, 'Error evaluating container for reaper');
         }
       }
 

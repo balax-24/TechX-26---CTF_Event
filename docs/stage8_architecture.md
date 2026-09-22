@@ -2,14 +2,13 @@
 ## Dynamic Challenge Infrastructure, Container Isolation & Lifecycle Management
 
 ---
-
 ## 1. Executive Summary & Objective
 
 Stage 8 introduces **Dynamic Challenge Infrastructure** to the TechX Madras 2026 CTF platform. In traditional static CTFs, all participants connect to a shared challenge instance or download static binaries. In contrast, modern cybersecurity competitions require **per-team isolated dynamic challenge environments** (such as intentionally vulnerable web services, pwn binaries, or service exploits) where:
 1. Each team receives an independent, ephemeral containerized runtime.
-2. Exploitation, denial-of-service, file corruption, or database drops by Team A cannot impact Team B.
+2. Exploitation, denial-of-service, file corruption, or database drops by Team A do not compromise Team B's instance.
 3. Every dynamic challenge container is treated as an **untrusted, hostile workload boundary**.
-4. The host server, backend core infrastructure (PostgreSQL, Redis, Fastify), Docker daemon, and neighboring containers are completely inaccessible to challenge workloads.
+4. Core infrastructure (PostgreSQL, Redis, Fastify), Docker daemon socket, and neighboring containers are partitioned and inaccessible to challenge workloads.
 
 ---
 
@@ -20,7 +19,7 @@ Dynamic challenges host intentionally vulnerable code. Once a participant exploi
 - **Host Escape**: Exploiting container breakout flaws, mounting host storage, interacting with `/var/run/docker.sock`, or abusing Linux kernel capabilities.
 - **Resource Denial of Service (DoS)**: Fork bombs, crypto-mining, unbounded memory consumption, disk exhaustion, or CPU monopolization.
 - **Lateral Movement & Network Pivoting**: Scanning the local Docker subnet, accessing internal services (PostgreSQL on port 5432, Redis on port 6379, Fastify on port 4000), or attacking another team's challenge container.
-- **SSRF & Proxy Abuse**: Manipulating reverse proxy endpoints to route requests to arbitrary internal IP addresses or host loopback interfaces.
+- **SSRF & Proxy Abuse**: Manipulating reverse proxy endpoints or returning upstream redirects to route requests to arbitrary internal IP addresses or host loopback interfaces.
 - **Secret Extraction**: Inspecting environment variables to steal CTF platform secrets (JWT signing keys, database passwords, session cookie secrets).
 
 ### 2.2 Trust Hierarchy
@@ -48,7 +47,7 @@ Dynamic challenges host intentionally vulnerable code. Once a participant exploi
 | - Per-team isolated ephemeral Docker containers                       |
 | - Dropped capabilities, no-new-privileges, unprivileged user          |
 | - Read-only root filesystem, finite tmpfs, finite memory/CPU/PIDs     |
-| - Isolated bridge network (No access to Zone 0 or other Zone 2 containers)
+| - Isolated per-instance bridge network (internal: true, icc: false)   |
 +-----------------------------------------------------------------------+
 ```
 
@@ -77,7 +76,13 @@ Every container spawned for a dynamic challenge enforces the following non-negot
 
 ## 4. Network Topology & Isolation Model
 
-### 4.1 Topology Diagram
+### 4.1 Topology Overview: Per-Instance Isolated Bridge Networks
+To ensure complete inter-team isolation and prevent challenge containers from communicating across instances:
+- Each active dynamic challenge instance is assigned a dedicated, short-lived Docker bridge network (`techx-inst-net-<instanceId[:8]>`).
+- Networks are created with `internal: true` to prevent external Internet egress.
+- When containerized, the Fastify backend dynamically attaches to the per-instance bridge (`docker network connect`) upon instance startup and disconnects upon teardown, allowing the reverse proxy gateway to reach `instance.internalIp:instance.internalPort`.
+- In host-mode deployments (standalone Node.js process), Fastify binds directly to the local bridge interface (`br-<id>`) in the host root network namespace.
+
 ```text
                          [Participant Browser / CLI]
                                       |
@@ -89,29 +94,36 @@ Every container spawned for a dynamic challenge enforces the following non-negot
                                (Port 4000)
                               /           \
                              /             \
-                   [ctf_core_net]       [ctf_challenges_net]
+                   [ctf_core_net]       [Dynamic Challenge Gateway]
                     /          \                 |
-                   v            v                v
-             [PostgreSQL]    [Redis]   [Challenge Proxy Gateway]
+                   v            v                |
+             [PostgreSQL]    [Redis]             |
              (Port 5432)   (Port 6379)           |
              (Isolated)    (Isolated)            |
                                       +----------+----------+
                                       |                     |
                                       v                     v
-                               [Per-Team Net A]      [Per-Team Net B]
+                               [Per-Instance Net A]  [Per-Instance Net B]
+                                (internal: true)      (internal: true)
                                       |                     |
                                       v                     v
                                 [Container A]         [Container B]
                                  (Team A Only)         (Team B Only)
 ```
 
-### 4.2 Network Isolation Invariants
-1. **Zero Access to Core Data Stores**:
-   `PostgreSQL` and `Redis` containers reside exclusively on `ctf_core_net`. They have no IP or routing interface on `ctf_challenges_net` or any challenge network.
-2. **Container-to-Container Segregation**:
-   Each dynamic challenge instance is connected to an isolated per-instance bridge network (`techx-net-<instanceId>`) or attached with network filtering. Team A cannot discover, ping, ARP, or connect to Team B's container.
-3. **Controlled Upstream Proxy (Zero SSRF)**:
-   Participants cannot access challenge container IP addresses directly. All participant HTTP/Web challenge traffic is routed through Fastify's `/api/v1/challenges/:slug/instance/proxy/*` gateway. The upstream target is resolved **strictly from the authenticated team's active database instance record** (`http://${instance.internalIp}:${instance.internalPort}/`). No user-supplied target IP, host, or URL is ever permitted.
+### 4.2 Network Isolation Invariants & Exact Routing Mechanics
+1. **Core Service Isolation (`ctf_core_net`)**:
+   `PostgreSQL` and `Redis` containers reside exclusively on `ctf_core_net`. They have no IP or routing interface on challenge networks. Direct connectivity attempts from challenge containers to port 5432, port 6379, or internal backend services fail.
+2. **Challenge-to-Challenge Segregation**:
+   Because each challenge instance resides on an independent bridge network (`techx-inst-net-A` vs `techx-inst-net-B`), containers from different teams share no subnet, cannot ARP or ping each other, and cannot establish direct TCP/UDP connections. Docker's `DOCKER-ISOLATION-STAGE-2` iptables chain explicitly drops forwarded traffic between different bridge devices.
+3. **Bridge Forwarding & ICC**:
+   On a dedicated per-instance bridge containing only the backend proxy and the single challenge container, intra-bridge communication is enabled (`icc: true`) so Fastify can route requests to the challenge. If `enable_icc: false` were enforced on this 2-member bridge, Docker's `-A FORWARD -i br-xxx -o br-xxx -j DROP` rule would block the proxy from reaching the challenge. Inter-challenge isolation is guaranteed by separate bridge networks, not intra-bridge packet dropping.
+4. **Egress Policy (External WAN Inaccessibility)**:
+   Per-instance challenge networks are provisioned with `internal: true`. Docker does not create default NAT/masquerade outbound routing rules for internal bridge networks, and no default gateway route is installed inside the container network namespace. Outbound traffic to the public Internet, internal host loopback services, or cloud metadata endpoints (`169.254.169.254`) is blocked.
+5. **Controlled Upstream Reverse Proxy**:
+   Participant-controlled upstream host/IP parameters are not accepted. Proxy destinations are resolved exclusively from server-controlled challenge-instance metadata (`http://${instance.internalIp}:${instance.internalPort}/`).
+6. **Proxy Redirect Safety**:
+   The reverse proxy does not follow upstream HTTP 3xx redirects. If an upstream challenge service returns a redirect pointing to `127.0.0.1`, `localhost`, `169.254.169.254`, or private subnets, the response with the `Location` header is passed directly back to the participant's browser. The platform never executes an internal request to redirect targets.
 
 ---
 
@@ -285,3 +297,33 @@ When Docker encounters failures (e.g. daemon down, image pull failure, resource 
    - `INSTANCE_NOT_FOUND`: No active instance exists for the team.
    - `INSTANCE_BUSY`: Instance is currently transitioning states (`CREATING` or `STOPPING`).
 3. **Structured Server Logs**: Full error context, container IDs, exit codes, and timestamps are logged internally using Pino with audit event recording.
+
+---
+
+## 10. Operational Hardening, Verification & Known Limitations
+
+### 10.1 Competition-End Behavior
+When the competition state transitions to `ended` or `archived`:
+1. **Immediate Proxy Gating**: `getProxyTarget` queries `competitionService.requireLiveCompetition()`. Any active participant HTTP session hitting `/proxy/*` immediately receives `403 FORBIDDEN` with code `COMPETITION_NOT_ACTIVE`.
+2. **Lifecycle Mutations Blocked**: `startInstance` and `resetInstance` immediately fail with `403 COMPETITION_NOT_ACTIVE`.
+3. **Automated Cleanup**: The `InstanceCleanupWorker` periodically checks competition state. Upon detecting `ended` or `archived`, it transitions all remaining active instances to `EXPIRED` and tears down all associated Docker containers and per-instance bridge networks.
+
+### 10.2 Orphan Reaper Trust Model
+The cleanup worker enforces a strict fail-closed trust model:
+- Only containers carrying **both** `techx.managed = 'true'` AND `techx.component = 'ctf-challenge'` are evaluated for reaping.
+- Core system containers (PostgreSQL, Redis, NGINX, Fastify) carry either no `techx.managed` label or `techx.component = 'core-datastore'`. They are strictly ignored by the reaper.
+- Containers with malformed or missing labels are never removed by the automated reaper.
+
+### 10.3 Verification Classification
+To adhere to strict engineering integrity and avoid false verification claims:
+- **`STATIC CONFIGURATION VERIFIED`**: Memory limits, CPU quotas, PIDs limit, read-only rootfs, `SecurityOpt: ["no-new-privileges:true"]`, `CapDrop: ["ALL"]`, `Privileged: false`, Docker Compose file validation, and schema definitions.
+- **`UNIT TEST VERIFIED`**: URL sanitization (CRLF/null-byte rejection), parameter rejection, redirect non-following, orphan reaper logic, concurrency mutexes, and secret exclusion.
+- **`DOCKER MOCK/CONTRACT VERIFIED`**: `MockDockerManager` verifies Docker Engine API payload contracts, network isolation simulation, and container creation parameters.
+- **`LIVE DOCKER INTEGRATION VERIFIED`**: `NOT VERIFIED` on hosts lacking a running Docker Linux engine daemon.
+- **`RUNTIME KERNEL ENFORCEMENT VERIFIED`**: `NOT VERIFIED` on hosts lacking an active Linux cgroups v2 controller or live Seccomp BPF filter.
+- **`PROXY-TO-CHALLENGE RUNTIME VERIFICATION`**: `NOT VERIFIED — NO LIVE LINUX DOCKER DAEMON` (Docker Desktop Linux daemon not running on this Windows host).
+
+### 10.4 Known Limitations
+1. **Per-Host Container Capacity**: Limited to configured `MAX_GLOBAL_INSTANCES` (default 100). When full, teams must wait for running instances to expire or stop before launching new ones.
+2. **Cold Start Latency**: Spawning a new container and waiting for healthcheck readiness takes approximately 1–3 seconds depending on image complexity and host load.
+3. **No Dynamic Outbound Access**: By default, challenge containers on `internal: true` bridge networks cannot make external network connections. If a specific challenge requires outbound Internet access, it must be explicitly configured with custom egress routing.

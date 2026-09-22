@@ -4,37 +4,37 @@
 
 ## 1. Security Boundary Invariants & Guarantees
 
-Dynamic CTF challenges are inherently hostile environments designed to be broken. Our security architecture operates on the principle of **assumed compromise**: once a challenge is exploited, the attacker has full unprivileged or root execution inside the container.
+Dynamic CTF challenges are inherently hostile environments designed to be broken. Our security architecture operates on the principle of **assumed compromise**: once a challenge is exploited, the attacker has interactive shell execution inside the container.
 
 The table below summarizes the core boundary invariants:
 
 | Threat / Invariant Question | Architectural Answer | Mechanism of Enforcement |
 | :--- | :--- | :--- |
-| **"If the participant controls every byte of input sent to the challenge, can they control Docker?"** | **NO** | The Docker socket (`/var/run/docker.sock`) is never mounted into challenge containers. Route handlers never accept raw Docker commands. |
-| **"Can a participant select an arbitrary Docker image?"** | **NO** | The API accepts only the challenge slug. The image is authoritatively resolved from the server registry (`dynamicChallengeRegistry`). |
-| **"Can a participant mount a host directory?"** | **NO** | No volume binds are permitted. Containers use `read_only: true` with bounded in-memory `tmpfs` mounts only. |
-| **"Can Team A access or control Team B's instance?"** | **NO** | Containers reside on isolated networks with no inter-container routing. Reverse proxy strictly validates session, team ID, and DB ownership. |
-| **"Can a compromised container attack PostgreSQL or Redis?"** | **NO** | PostgreSQL and Redis reside exclusively on `ctf_core_net`. Dynamic challenges run on `ctf_challenges_net` which has no IP interface or route to core data stores. |
-| **"Can a fork bomb take down the host?"** | **NO** | Linux process limit (`PidsLimit: 64`) is enforced on every container at the kernel level. |
-| **"Can an attacker monopolize CPU or memory?"** | **NO** | Hard memory limits (256MB–512MB) and CPU quotas (0.5 vCPU) are enforced via Linux cgroups. |
+| **Can a participant control the Docker daemon?** | **NO** | The Docker socket (`/var/run/docker.sock`) is never mounted into challenge containers. Route handlers never accept raw Docker commands. |
+| **Can a participant select an arbitrary Docker image?** | **NO** | The API accepts only the challenge slug. The image is authoritatively resolved from the server registry (`dynamicChallengeRegistry`). |
+| **Can a participant mount a host directory?** | **NO** | No volume binds are permitted. Containers use `read_only: true` with bounded in-memory `tmpfs` mounts only. |
+| **Can Team A access or alter Team B's instance?** | **NO** | Containers reside on dedicated per-instance bridge networks (`internal: true, icc: true`). Inter-instance isolation is guaranteed by distinct bridge networks, where cross-bridge forwarding is dropped. Reverse proxy strictly validates session, team ID, and DB ownership. |
+| **Can a compromised container connect to PostgreSQL or Redis?** | **NO** | PostgreSQL and Redis reside exclusively on `ctf_core_net`. Dynamic challenges run on isolated per-instance networks with no IP interface or route to core data stores. |
+| **Can a fork bomb exhaust host process tables?** | **NO** | Linux process limit (`PidsLimit: 64`) is configured on every container. |
+| **Can an attacker monopolize CPU or memory?** | **NO** | Hard memory limits (256MB–512MB) and CPU quotas (0.5 vCPU) are configured via Docker container host configuration. |
 
 ---
 
 ## 2. Hardened Runtime Configuration
 
 ### 2.1 Linux Kernel Capabilities (`CapDrop: ['ALL']`)
-All standard Linux capabilities are removed:
+All standard Linux capabilities are removed by default:
 - `CAP_SYS_ADMIN`: Prevents mount, chroot, debugfs, namespace manipulation.
 - `CAP_NET_ADMIN` & `CAP_NET_RAW`: Prevents packet sniffing, raw socket crafting, ARP spoofing.
 - `CAP_DAC_OVERRIDE`: Enforces file permissions even for UID 0 (root).
 - `CAP_SYS_PTRACE`: Prevents process tracing and memory injection across process trees.
 
 ### 2.2 Privilege Escalation Prevention (`no-new-privileges: true`)
-The `PR_SET_NO_NEW_PRIVS` flag is set on the container root process. This ensures that even if a setuid or setgid binary (such as `/usr/bin/sudo` or custom setuid binaries) exists inside the challenge filesystem, it cannot gain elevated capabilities or transition to a higher privilege domain.
+The `PR_SET_NO_NEW_PRIVS` flag is set on the container process. This ensures that even if a setuid or setgid binary exists inside the challenge filesystem, it cannot gain elevated capabilities or transition to a higher privilege domain.
 
 ### 2.3 Filesystem Protection (`ReadonlyRootfs: true`)
 The root filesystem of challenge containers is mounted read-only.
-- Attackers cannot write rootkits, overwrite system binaries, or alter configuration files.
+- Filesystem changes cannot persist across container reboots or resets.
 - If writable scratch space is required by challenge software, an explicit ephemeral in-memory mount is provided:
   ```text
   /tmp: rw,noexec,nosuid,size=32m
@@ -42,42 +42,70 @@ The root filesystem of challenge containers is mounted read-only.
 - Any files written to `/tmp` are bounded by 32MB and cannot be executed as binaries (`noexec`).
 
 ### 2.4 Seccomp System Call Filtering
-Containers run under Docker's default or hardened Seccomp filter. Risky syscalls including:
-- `clone` with `CLONE_NEWUSER` (prevents user namespace breakout exploits)
-- `bpf` (prevents Berkeley Packet Filter kernel exploits)
+Containers run under Docker's default Seccomp filter. Risky syscalls including:
+- `clone` with `CLONE_NEWUSER`
+- `bpf`
 - `sys_chroot`, `kexec_load`, `reboot`
-are blocked at the kernel syscall boundary.
+are blocked by the seccomp profile. Seccomp is never set to unconfined.
 
 ---
 
-## 3. Network Isolation Architecture
+## 3. Network Topology, Egress & Proxy Safety
 
 ```text
-+-----------------------------------------------------------------+
-|                       CTF PLATFORM HOST                         |
-|                                                                 |
-|   +--------------------------+    +-------------------------+   |
-|   | ctf_core_net (Isolated)  |    | ctf_challenges_net      |   |
-|   |                          |    |                         |   |
-|   | - PostgreSQL (5432)      |    | - Challenge Inst A      |   |
-|   | - Redis (6379)           |    | - Challenge Inst B      |   |
-|   | - Fastify Core API       |<---| - Fastify Proxy Client  |   |
-|   +--------------------------+    +-------------------------+   |
-+-----------------------------------------------------------------+
++-------------------------------------------------------------------------------+
+|                               CTF PLATFORM HOST                               |
+|                                                                               |
+|   +--------------------------+          +---------------------------------+   |
+|   | ctf_core_net (Isolated)  |          | Fastify Dynamic Gateway         |   |
+|   |                          |          |                                 |   |
+|   | - PostgreSQL (5432)      |          | - Inbound Proxy Gate            |   |
+|   | - Redis (6379)           |          | - Lifecycle Manager             |   |
+|   | - Fastify Core API       |          +----------------+----------------+   |
+|   +--------------------------+                           |                    |
+|                                         +----------------+----------------+   |
+|                                         |                                 |   |
+|                                         v                                 v   |
+|                         +-------------------------------+ +-----------------+ |
+|                         | techx-inst-net-A (internal)   | | techx-inst-net-B| |
+|                         | - Challenge Container Team A  | | - Container B   | |
+|                         +-------------------------------+ +-----------------+ |
++-------------------------------------------------------------------------------+
 ```
 
-1. **Database & Cache Inaccessibility**:
-   The PostgreSQL and Redis containers do not join `ctf_challenges_net`. Docker bridge routing prevents packets originating from `ctf_challenges_net` from reaching `ctf_core_net`.
-2. **Reverse Proxy Upstream Resolution (Anti-SSRF)**:
-   The reverse proxy at `/api/v1/challenges/:slug/instance/proxy/*` resolves upstream destination strictly using `http://${instance.internalIp}:${instance.internalPort}/`.
-   - Any query parameters such as `?url=`, `?host=`, or `?target=` are completely ignored.
-   - Any attempt to forge request paths to internal IP ranges (127.0.0.1, 169.254.169.254) is structurally impossible because the destination host is locked to the DB record.
+### 3.1 Network Topology Distinction: Per-Instance vs Shared Challenge Network
+- **Per-Instance Network Architecture**:
+  Rather than placing all team containers on a single flat bridge network, the platform provisions a dedicated Docker bridge network per challenge instance (`techx-inst-net-<instanceId[:8]>`) with `internal: true`.
+- **Inter-Instance Denial**:
+  Containers from different teams cannot communicate with each other over the network. They reside on distinct subnets and Docker bridges, where inter-bridge forwarding is dropped by the kernel's `DOCKER-ISOLATION-STAGE-2` chain.
+- **Proxy Attachment & Forwarding**:
+  Within each per-instance bridge, intra-bridge communication is enabled (`icc: true`) so that the Fastify reverse proxy (either attached as a container endpoint or routing from host netns) can reach the container's internal IP. Because each bridge contains strictly one challenge container, no cross-challenge communication is possible.
+
+### 3.2 Egress Policy
+- Challenge networks are provisioned with `internal: true`.
+- Docker disables outbound NAT masquerading on internal networks, and omits default gateway routing, blocking container egress to the public Internet.
+- Challenge containers cannot reach the Docker daemon socket, host loopback services, or core data stores (`PostgreSQL`, `Redis`).
+
+### 3.3 Upstream Proxy Target Validation & Redirect Safety
+- **Target Resolution**: Participant-controlled upstream host/IP parameters are not accepted. Proxy destinations are resolved exclusively from server-controlled challenge-instance metadata (`http://${instance.internalIp}:${instance.internalPort}/`).
+- **Input Sanitization**: Target IPs are validated as dotted-decimal IPv4 addresses, ports as integers (1–65535), and subpaths are checked to reject carriage return (`\r`), newline (`\n`), and null byte (`\0`) injections.
+- **Redirect Policy**: Upstream 3xx redirect responses (`301`, `302`, `303`, `307`, `308`) are NOT followed by the reverse proxy. They are passed directly back to the participant with the original `Location` header, ensuring the reverse proxy cannot be turned into an internal HTTP pivoting client.
 
 ---
 
 ## 4. Secret Isolation Policy
 
 Dynamic challenge containers never receive platform environment variables:
-- `JWT_SECRET`, `COOKIE_SECRET`, `DATABASE_URL`, `REDIS_PASSWORD`, `FLAG_SALT` are explicitly forbidden by `dynamicChallengeRegistry.validateDefinition()`.
-- If an administrator or author attempts to register a challenge containing sensitive variable names, the platform aborts startup with a `Security Violation` error.
-- Challenges receive only explicit non-secret metadata (e.g. `CHALLENGE_INSTANCE_ID`).
+- `JWT_SECRET`, `COOKIE_SECRET`, `DATABASE_URL`, `REDIS_PASSWORD`, `FLAG_SALT`, and cloud credentials are excluded from container environment configurations.
+- Challenges receive only explicit non-secret metadata (e.g. `CHALLENGE_INSTANCE_ID`, `CHALLENGE_PORT`) and challenge-specific allowlisted variables.
+
+---
+
+## 5. Verification Classification
+
+- **`STATIC CONFIGURATION VERIFIED`**: Memory limits, CPU quotas, PIDs limit, read-only rootfs, `SecurityOpt: ["no-new-privileges:true"]`, `CapDrop: ["ALL"]`, `Privileged: false`, Docker Compose file validation, and schema definitions.
+- **`UNIT TEST VERIFIED`**: URL sanitization (CRLF/null-byte rejection), parameter rejection, redirect non-following, orphan reaper logic, concurrency mutexes, and secret exclusion.
+- **`DOCKER MOCK/CONTRACT VERIFIED`**: `MockDockerManager` verifies Docker Engine API payload contracts, network isolation simulation, and container creation parameters.
+- **`LIVE DOCKER INTEGRATION VERIFIED`**: `NOT VERIFIED` on hosts lacking a running Docker Linux engine daemon.
+- **`RUNTIME KERNEL ENFORCEMENT VERIFIED`**: `NOT VERIFIED` on hosts lacking an active Linux cgroups v2 controller or live Seccomp BPF filter.
+- **`PROXY-TO-CHALLENGE RUNTIME VERIFICATION`**: `NOT VERIFIED — NO LIVE LINUX DOCKER DAEMON` (Docker Desktop Linux daemon not running on this Windows host).

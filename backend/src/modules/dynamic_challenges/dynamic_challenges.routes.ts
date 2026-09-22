@@ -130,7 +130,7 @@ export const dynamicChallengeRoutes: FastifyPluginAsync = async (app: FastifyIns
   );
 
   // ---------------------------------------------------------------------------
-  // 5. AUTHORIZED REVERSE PROXY GATEWAY (Zero SSRF)
+  // 5. AUTHORIZED REVERSE PROXY GATEWAY
   // ---------------------------------------------------------------------------
   const proxyHandler = async (req: any, reply: any) => {
     const { slug } = req.params as { slug: string };
@@ -145,23 +145,80 @@ export const dynamicChallengeRoutes: FastifyPluginAsync = async (app: FastifyIns
       return handleDomainError(err, reply, req.log);
     }
 
+    // Strict IP validation: Must be dotted-decimal IPv4
+    const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+    if (!ipv4Regex.test(target.internalIp)) {
+      req.log.error({ internalIp: target.internalIp }, 'Invalid internal IP in instance metadata');
+      return reply.internalServerError('Invalid instance target configuration');
+    }
+
+    // Strict Port validation: Must be an integer between 1 and 65535
+    if (
+      !Number.isInteger(target.internalPort) ||
+      target.internalPort < 1 ||
+      target.internalPort > 65535
+    ) {
+      req.log.error({ internalPort: target.internalPort }, 'Invalid internal port in instance metadata');
+      return reply.internalServerError('Invalid instance target configuration');
+    }
+
+    // Reject CRLF, null bytes, and path smuggling
     const subpath = req.params['*'] || '';
-    const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
-    const upstreamPath = '/' + subpath.replace(/^\//, '') + queryString;
+    if (/[\r\n\0]/.test(req.url) || /[\r\n\0]/.test(subpath)) {
+      return reply.badRequest('Invalid characters in request path');
+    }
+
+    let rawQuery = '';
+    const qIndex = req.url.indexOf('?');
+    if (qIndex !== -1) {
+      rawQuery = req.url.substring(qIndex);
+      const hashIndex = rawQuery.indexOf('#');
+      if (hashIndex !== -1) {
+        rawQuery = rawQuery.substring(0, hashIndex);
+      }
+    }
+
+    const cleanSubpath = subpath.replace(/^\//, '').split('#')[0];
+    const upstreamPath = '/' + cleanSubpath + rawQuery;
+
+    // Filter hop-by-hop and client spoofing headers
+    const forwardHeaders: Record<string, any> = {};
+    const forbiddenHeaders = new Set([
+      'host',
+      'connection',
+      'keep-alive',
+      'proxy-authenticate',
+      'proxy-authorization',
+      'te',
+      'trailer',
+      'transfer-encoding',
+      'upgrade',
+      'x-target-host',
+      'x-upstream-url',
+      'x-forwarded-host',
+      'x-forwarded-server',
+    ]);
+
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (!forbiddenHeaders.has(k.toLowerCase()) && v !== undefined) {
+        forwardHeaders[k.toLowerCase()] = v;
+      }
+    }
+
+    forwardHeaders['host'] = `${target.internalIp}:${target.internalPort}`;
+    forwardHeaders['x-forwarded-for'] = req.ip;
+    forwardHeaders['x-forwarded-proto'] = 'http';
 
     return new Promise<void>((resolve) => {
+      // Node http.request strictly communicates with target.internalIp:target.internalPort
+      // and does NOT automatically follow upstream redirects (Location: ...)
       const proxyReq = http.request(
         {
           host: target.internalIp,
           port: target.internalPort,
           path: upstreamPath,
           method: req.method,
-          headers: {
-            ...req.headers,
-            host: `${target.internalIp}:${target.internalPort}`,
-            'x-forwarded-for': req.ip,
-            'x-forwarded-proto': 'http',
-          },
+          headers: forwardHeaders,
           timeout: 10000,
         },
         (proxyRes) => {

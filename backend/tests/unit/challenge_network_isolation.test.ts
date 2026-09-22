@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DynamicChallengesService } from '../../src/modules/dynamic_challenges/dynamic_challenges.service.js';
 import { db } from '../../src/db/index.js';
+import { competitionService } from '../../src/modules/competition/competition.service.js';
 
 describe('Stage 8: Challenge Network Isolation & Inbound Reverse Proxy Security (Zero SSRF)', () => {
   let service: DynamicChallengesService;
@@ -13,6 +14,7 @@ describe('Stage 8: Challenge Network Isolation & Inbound Reverse Proxy Security 
   beforeEach(() => {
     service = new DynamicChallengesService();
     vi.restoreAllMocks();
+    vi.spyOn(competitionService, 'requireLiveCompetition').mockResolvedValue(undefined);
   });
 
   it('resolves proxy upstream strictly from authenticated database record, ignoring user-supplied targets', async () => {

@@ -94,23 +94,40 @@ Routes participant HTTP requests directly to their isolated challenge container.
 - **Security Properties**:
   - Validates authentication and active team membership on every single HTTP request.
   - Upstream IP and port are resolved **strictly** from the database record for the requesting team's active instance.
-  - Zero arbitrary target parameters (`target=`, `url=`, `host=`) are accepted (Immune to SSRF).
-  - Hop-by-hop headers are stripped.
+  - Participant-controlled upstream host/IP parameters are not accepted. Proxy destinations are resolved exclusively from server-controlled challenge-instance metadata.
+  - Target IP addresses are validated as dotted-decimal IPv4 and ports as integers (1–65535).
+  - Hop-by-hop headers and client spoofing headers (`x-target-host`, `x-upstream-url`, `host`, `x-forwarded-host`) are stripped.
+  - Subpaths with CRLF (`\r`, `\n`) or null bytes (`\0`) are rejected with 400 Bad Request.
+  - Upstream HTTP 3xx redirects (`Location`) are returned directly to the participant without automatic following by the proxy.
 
 ---
 
-## 3. Operations & Maintenance
+## 3. Operations, Cleanup & Competition Lifecycle
 
 ### 3.1 TTL Background Cleanup Worker
 - Runs every 15 seconds.
 - Queries `challenge_instances` where `expires_at <= NOW()` and status is `RUNNING` or `CREATING`.
-- Transitions state to `STOPPING`, destroys the container, and updates status to `EXPIRED`.
+- Transitions state to `STOPPING`, destroys the container and associated network, and updates status to `EXPIRED`.
 - Records audit log `challenge_instance_expired`.
 
 ### 3.2 Orphan Reaper & Crash Reconciliation
-- The worker cross-references Docker containers possessing `techx.managed=true` with active database records:
-  - **Orphan Container Detected**: Docker container exists, but no corresponding active record exists in DB $\to$ Container is immediately stopped and purged.
+- The worker cross-references Docker containers possessing `techx.managed = 'true'` AND `techx.component = 'ctf-challenge'` with active database records:
+  - **Orphan Container Detected**: Managed challenge container exists without an active DB record $\to$ Stopped and removed immediately.
+  - **Unmanaged Containers**: Databases, caches, and host containers lacking challenge labels are strictly ignored.
   - **Crashed Container Detected**: DB record is marked `RUNNING`, but Docker inspect returns exited or null $\to$ DB record transitions to `FAILED` with `failureReason: 'CONTAINER_TERMINATED_EXTERNALLY'`.
 
-### 3.3 Server Startup Recovery
-On backend startup, `instanceCleanupWorker.reconcile()` runs immediately to clean up stale or abandoned containers from previous ungraceful server terminations or crashes.
+### 3.3 Competition-End Behavior
+- When the competition transitions to `ended` or `archived`:
+  - New instance requests and resets are blocked (`403 COMPETITION_NOT_ACTIVE`).
+  - Active proxy sessions are immediately cut off.
+  - The cleanup worker automatically expires and cleans up all active challenge containers and networks.
+
+---
+
+## 4. Verification Status
+
+- **`STATIC CONFIGURATION VERIFIED`**: Docker Compose configuration, schemas, and resource limit constraints.
+- **`UNIT TEST VERIFIED`**: Proxy target validation, redirect handling, CRLF injection defenses, orphan reaper logic, race condition mutexes, and competition lifecycle boundaries.
+- **`DOCKER MOCK/CONTRACT VERIFIED`**: Docker API creation schemas, network creation, and isolation parameters verified via mock test harness.
+- **`LIVE DOCKER INTEGRATION VERIFIED`**: `NOT VERIFIED` (no live Linux Docker engine daemon active on host).
+- **`PROXY-TO-CHALLENGE RUNTIME VERIFICATION`**: `NOT VERIFIED — NO LIVE LINUX DOCKER DAEMON`.

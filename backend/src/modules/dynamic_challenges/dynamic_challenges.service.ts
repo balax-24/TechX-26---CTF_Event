@@ -13,11 +13,43 @@ export class DynamicChallengesService {
   public MAX_INSTANCES_PER_TEAM = 2;
   public MAX_GLOBAL_INSTANCES = 100;
 
+  private static locks = new Map<string, Promise<void>>();
+
+  private async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    while (DynamicChallengesService.locks.has(key)) {
+      await DynamicChallengesService.locks.get(key);
+    }
+    let resolveLock!: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      resolveLock = resolve;
+    });
+    DynamicChallengesService.locks.set(key, lockPromise);
+    try {
+      return await fn();
+    } finally {
+      DynamicChallengesService.locks.delete(key);
+      resolveLock();
+    }
+  }
+
   /**
    * Spawns or returns existing active dynamic challenge instance.
    * Fully idempotent: duplicate requests safely return the current instance.
    */
   async startInstance(params: {
+    slug: string;
+    userId: string;
+    teamId: string;
+    ipAddress: string;
+    isAdmin?: boolean;
+  }): Promise<InstanceSummary> {
+    const { slug, teamId } = params;
+    return await this.withLock(`instance:${teamId}:${slug}`, async () => {
+      return await this.executeStartInstance(params);
+    });
+  }
+
+  private async executeStartInstance(params: {
     slug: string;
     userId: string;
     teamId: string;
@@ -41,257 +73,275 @@ export class DynamicChallengesService {
       .where(eq(teams.id, teamId))
       .limit(1);
 
-    if (!team) {
-      throw new Error('TEAM_NOT_FOUND');
-    }
-    if (team.status === 'disqualified') {
-      throw new Error('TEAM_DISQUALIFIED');
-    }
-    if (team.status !== 'active') {
-      throw new Error('TEAM_DISABLED');
-    }
-
-    // 4. Challenge Verification & Release Gate
-    const [challenge] = await db
-      .select({
-        id: challenges.id,
-        slug: challenges.slug,
-        status: challenges.status,
-        releaseTime: challenges.releaseTime,
-      })
-      .from(challenges)
-      .where(eq(challenges.slug, slug))
-      .limit(1);
-
-    if (!challenge || challenge.status !== 'published') {
-      throw new Error('CHALLENGE_NOT_FOUND');
-    }
-    if (challenge.releaseTime && new Date(challenge.releaseTime) > new Date()) {
-      throw new Error('CHALLENGE_NOT_RELEASED');
-    }
-
-    // 5. Server-Authoritative Registry Verification
-    const def =
-      dynamicChallengeRegistry.getDefinition(challenge.id) ||
-      dynamicChallengeRegistry.getDefinition(challenge.slug);
-
-    if (!def) {
-      throw new Error('CHALLENGE_NOT_DYNAMIC');
-    }
-
-    // 6. Idempotency Check: Existing Active Instance for this Team + Challenge
-    const [existing] = await db
-      .select({
-        id: challengeInstances.id,
-        challengeId: challengeInstances.challengeId,
-        teamId: challengeInstances.teamId,
-        status: challengeInstances.status,
-        containerId: challengeInstances.containerId,
-        containerName: challengeInstances.containerName,
-        internalIp: challengeInstances.internalIp,
-        internalPort: challengeInstances.internalPort,
-        createdAt: challengeInstances.createdAt,
-        expiresAt: challengeInstances.expiresAt,
-        failureReason: challengeInstances.failureReason,
-      })
-      .from(challengeInstances)
-      .where(
-        and(
-          eq(challengeInstances.teamId, teamId),
-          eq(challengeInstances.challengeId, challenge.id),
-          inArray(challengeInstances.status, ['CREATING', 'RUNNING'])
-        )
-      )
-      .limit(1);
-
-    if (existing) {
-      if (new Date(existing.expiresAt) <= new Date()) {
-        await this.expireInstance(existing.id);
-      } else {
-        return this.formatInstanceSummary(existing, challenge.slug);
+      if (!team) {
+        throw new Error('TEAM_NOT_FOUND');
       }
-    }
+      if (team.status === 'disqualified') {
+        throw new Error('TEAM_DISQUALIFIED');
+      }
+      if (team.status !== 'active') {
+        throw new Error('TEAM_DISABLED');
+      }
 
-    // 7. Team Concurrency Cap
-    const activeTeamCount = await db
-      .select({ count: count() })
-      .from(challengeInstances)
-      .where(
-        and(
-          eq(challengeInstances.teamId, teamId),
-          inArray(challengeInstances.status, ['CREATING', 'RUNNING'])
+      // 4. Challenge Verification & Release Gate
+      const [challenge] = await db
+        .select({
+          id: challenges.id,
+          slug: challenges.slug,
+          status: challenges.status,
+          releaseTime: challenges.releaseTime,
+        })
+        .from(challenges)
+        .where(eq(challenges.slug, slug))
+        .limit(1);
+
+      if (!challenge || challenge.status !== 'published') {
+        throw new Error('CHALLENGE_NOT_FOUND');
+      }
+      if (challenge.releaseTime && new Date(challenge.releaseTime) > new Date()) {
+        throw new Error('CHALLENGE_NOT_RELEASED');
+      }
+
+      // 5. Server-Authoritative Registry Verification
+      const def =
+        dynamicChallengeRegistry.getDefinition(challenge.id) ||
+        dynamicChallengeRegistry.getDefinition(challenge.slug);
+
+      if (!def) {
+        throw new Error('CHALLENGE_NOT_DYNAMIC');
+      }
+
+      // 6. Idempotency Check: Existing Active Instance for this Team + Challenge
+      const [existing] = await db
+        .select({
+          id: challengeInstances.id,
+          challengeId: challengeInstances.challengeId,
+          teamId: challengeInstances.teamId,
+          status: challengeInstances.status,
+          containerId: challengeInstances.containerId,
+          containerName: challengeInstances.containerName,
+          internalIp: challengeInstances.internalIp,
+          internalPort: challengeInstances.internalPort,
+          createdAt: challengeInstances.createdAt,
+          expiresAt: challengeInstances.expiresAt,
+          failureReason: challengeInstances.failureReason,
+        })
+        .from(challengeInstances)
+        .where(
+          and(
+            eq(challengeInstances.teamId, teamId),
+            eq(challengeInstances.challengeId, challenge.id),
+            inArray(challengeInstances.status, ['CREATING', 'RUNNING'])
+          )
         )
-      );
+        .limit(1);
 
-    if (Number(activeTeamCount[0]?.count || 0) >= this.MAX_INSTANCES_PER_TEAM) {
-      throw new Error('TEAM_INSTANCE_LIMIT_EXCEEDED');
-    }
+      if (existing) {
+        if (new Date(existing.expiresAt) <= new Date()) {
+          await this.expireInstance(existing.id);
+        } else {
+          return this.formatInstanceSummary(existing, challenge.slug);
+        }
+      }
 
-    // 8. Global Platform Capacity Cap
-    const globalCount = await db
-      .select({ count: count() })
-      .from(challengeInstances)
-      .where(inArray(challengeInstances.status, ['CREATING', 'RUNNING']));
+      // 7. Team Concurrency Cap
+      const activeTeamCount = await db
+        .select({ count: count() })
+        .from(challengeInstances)
+        .where(
+          and(
+            eq(challengeInstances.teamId, teamId),
+            inArray(challengeInstances.status, ['CREATING', 'RUNNING'])
+          )
+        );
 
-    if (Number(globalCount[0]?.count || 0) >= this.MAX_GLOBAL_INSTANCES) {
-      throw new Error('CHALLENGE_CAPACITY_EXCEEDED');
-    }
+      if (Number(activeTeamCount[0]?.count || 0) >= this.MAX_INSTANCES_PER_TEAM) {
+        throw new Error('TEAM_INSTANCE_LIMIT_EXCEEDED');
+      }
 
-    // 9. Allocate Identifiers & TTL
-    const instanceId = randomUUID();
-    const containerName = `techx26-inst-${instanceId.substring(0, 8)}-${Math.random().toString(36).substring(2, 6)}`;
-    const accessToken = randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + def.ttlSeconds * 1000);
+      // 8 & 9. Global Capacity Gate & Allocation under concurrency lock
+      const instanceId = randomUUID();
+      const containerName = `techx26-inst-${instanceId.substring(0, 8)}-${Math.random().toString(36).substring(2, 6)}`;
+      const networkName = `techx-inst-net-${instanceId.substring(0, 8)}`;
+      const accessToken = randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + def.ttlSeconds * 1000);
 
-    // Insert CREATING state record
-    const [createdInstance] = await db
-      .insert(challengeInstances)
-      .values({
-        id: instanceId,
-        challengeId: challenge.id,
-        teamId,
-        userId,
-        status: 'CREATING',
-        containerName,
-        internalPort: def.internalPort,
-        accessToken,
-        expiresAt,
-        instanceMetadata: {
-          slug: challenge.slug,
+      await this.withLock('global_capacity_lock', async () => {
+        const globalCount = await db
+          .select({ count: count() })
+          .from(challengeInstances)
+          .where(inArray(challengeInstances.status, ['CREATING', 'RUNNING']));
+
+        if (Number(globalCount[0]?.count || 0) >= this.MAX_GLOBAL_INSTANCES) {
+          throw new Error('CHALLENGE_CAPACITY_EXCEEDED');
+        }
+
+        // Insert CREATING state record
+        await db
+          .insert(challengeInstances)
+          .values({
+            id: instanceId,
+            challengeId: challenge.id,
+            teamId,
+            userId,
+            status: 'CREATING',
+            containerName,
+            internalPort: def.internalPort,
+            accessToken,
+            expiresAt,
+            instanceMetadata: {
+              slug: challenge.slug,
+              image: def.image,
+              ttlSeconds: def.ttlSeconds,
+              networkName,
+            },
+          });
+      });
+
+      await auditService.record({
+        actorId: userId,
+        actorRole: 'participant',
+        actorIp: ipAddress,
+        action: 'challenge_instance_created',
+        entityType: 'challenge_instance',
+        entityId: instanceId,
+        newState: { status: 'CREATING', challengeId: challenge.id, teamId },
+        detailsJson: { slug: challenge.slug },
+      });
+
+      // 10. Container & Network Creation via Hardened Docker Manager
+      const dockerManager = getDockerManager();
+      let containerResult: DockerContainerResult;
+
+      try {
+        // Create isolated per-instance bridge network (internal: true prevents WAN egress, icc: true allows proxy to reach container)
+        await dockerManager.createNetwork(networkName, { internal: true, icc: true });
+
+        // If backend is containerized in production, attach it to the per-instance bridge so the reverse proxy can route
+        const backendContainer = this.getBackendContainerName();
+        if (backendContainer) {
+          await dockerManager.connectContainer(networkName, backendContainer).catch(() => {});
+        }
+
+        containerResult = await dockerManager.createAndStartContainer({
+          containerName,
           image: def.image,
-          ttlSeconds: def.ttlSeconds,
-        },
-      })
-      .returning();
+          networkName,
+          internalPort: def.internalPort,
+          memoryLimitBytes: def.memoryLimitBytes,
+          cpuLimitNano: def.cpuLimitNano,
+          pidsLimit: def.pidsLimit,
+          readOnlyRootfs: def.readOnlyRootfs,
+          tmpfsMounts: def.tmpfsMounts,
+          env: {
+            ...(def.envAllowlist || {}),
+            CHALLENGE_INSTANCE_ID: instanceId,
+            CHALLENGE_PORT: String(def.internalPort),
+          },
+          labels: {
+            'techx.managed': 'true',
+            'techx.component': 'ctf-challenge',
+            'techx.instance_id': instanceId,
+            'techx.challenge_id': challenge.id,
+            'techx.team_id': teamId,
+          },
+        });
+      } catch (err: any) {
+        logger.error({ err: err.message, instanceId, teamId }, 'Docker container creation failed');
 
-    await auditService.record({
-      actorId: userId,
-      actorRole: 'participant',
-      actorIp: ipAddress,
-      action: 'challenge_instance_created',
-      entityType: 'challenge_instance',
-      entityId: instanceId,
-      newState: { status: 'CREATING', challengeId: challenge.id, teamId },
-      detailsJson: { slug: challenge.slug },
-    });
+        const backendContainer = this.getBackendContainerName();
+        if (backendContainer) {
+          await dockerManager.disconnectContainer(networkName, backendContainer).catch(() => {});
+        }
+        await dockerManager.removeNetwork(networkName).catch(() => {});
 
-    // 10. Container Creation via Hardened Docker Manager
-    const dockerManager = getDockerManager();
-    let containerResult: DockerContainerResult;
+        await db
+          .update(challengeInstances)
+          .set({
+            status: 'FAILED',
+            failureReason: 'CONTAINER_STARTUP_ERROR',
+            stoppedAt: new Date(),
+          })
+          .where(eq(challengeInstances.id, instanceId));
 
-    try {
-      containerResult = await dockerManager.createAndStartContainer({
-        containerName,
-        image: def.image,
-        networkName: 'techx_ctf_challenges_net',
-        internalPort: def.internalPort,
-        memoryLimitBytes: def.memoryLimitBytes,
-        cpuLimitNano: def.cpuLimitNano,
-        pidsLimit: def.pidsLimit,
-        readOnlyRootfs: def.readOnlyRootfs,
-        tmpfsMounts: def.tmpfsMounts,
-        env: {
-          ...(def.envAllowlist || {}),
-          CHALLENGE_INSTANCE_ID: instanceId,
-          CHALLENGE_PORT: String(def.internalPort),
-        },
-        labels: {
-          'techx.managed': 'true',
-          'techx.component': 'ctf-challenge',
-          'techx.instance_id': instanceId,
-          'techx.challenge_id': challenge.id,
-          'techx.team_id': teamId,
-        },
-      });
-    } catch (err: any) {
-      logger.error({ err: err.message, instanceId, teamId }, 'Docker container creation failed');
+        await auditService.record({
+          actorId: userId,
+          actorRole: 'participant',
+          actorIp: ipAddress,
+          action: 'challenge_instance_failed',
+          entityType: 'challenge_instance',
+          entityId: instanceId,
+          reason: 'Container startup error',
+          detailsJson: { challengeId: challenge.id, teamId, error: err.message },
+        });
 
-      await db
+        throw new Error('INSTANCE_START_FAILED');
+      }
+
+      // 11. Bounded Health Check Verification
+      let healthy = false;
+      for (let i = 0; i < 5; i++) {
+        healthy = await dockerManager.healthCheck(
+          containerResult.internalIp,
+          containerResult.internalPort,
+          def.healthCheckPath || '/'
+        );
+        if (healthy) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      if (!healthy) {
+        await dockerManager.stopAndRemoveContainer(containerResult.containerId).catch(() => {});
+        await dockerManager.removeNetwork(networkName).catch(() => {});
+
+        await db
+          .update(challengeInstances)
+          .set({
+            status: 'FAILED',
+            failureReason: 'HEALTH_CHECK_TIMEOUT',
+            stoppedAt: new Date(),
+          })
+          .where(eq(challengeInstances.id, instanceId));
+
+        await auditService.record({
+          actorId: userId,
+          actorRole: 'participant',
+          actorIp: ipAddress,
+          action: 'challenge_instance_failed',
+          entityType: 'challenge_instance',
+          entityId: instanceId,
+          reason: 'Health check failed',
+          detailsJson: { challengeId: challenge.id, teamId },
+        });
+
+        throw new Error('INSTANCE_START_FAILED');
+      }
+
+      // 12. Transition to RUNNING state
+      const [runningInstance] = await db
         .update(challengeInstances)
         .set({
-          status: 'FAILED',
-          failureReason: 'CONTAINER_STARTUP_ERROR',
-          stoppedAt: new Date(),
+          status: 'RUNNING',
+          containerId: containerResult.containerId,
+          internalIp: containerResult.internalIp,
+          startedAt: new Date(),
+          lastSeenAt: new Date(),
         })
-        .where(eq(challengeInstances.id, instanceId));
+        .where(eq(challengeInstances.id, instanceId))
+        .returning();
 
       await auditService.record({
         actorId: userId,
         actorRole: 'participant',
         actorIp: ipAddress,
-        action: 'challenge_instance_failed',
+        action: 'challenge_instance_started',
         entityType: 'challenge_instance',
         entityId: instanceId,
-        reason: 'Container startup error',
-        detailsJson: { challengeId: challenge.id, teamId, error: err.message },
-      });
-
-      throw new Error('INSTANCE_START_FAILED');
-    }
-
-    // 11. Bounded Health Check Verification
-    let healthy = false;
-    for (let i = 0; i < 5; i++) {
-      healthy = await dockerManager.healthCheck(
-        containerResult.internalIp,
-        containerResult.internalPort,
-        def.healthCheckPath || '/'
-      );
-      if (healthy) break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-
-    if (!healthy) {
-      await dockerManager.stopAndRemoveContainer(containerResult.containerId).catch(() => {});
-
-      await db
-        .update(challengeInstances)
-        .set({
-          status: 'FAILED',
-          failureReason: 'HEALTH_CHECK_TIMEOUT',
-          stoppedAt: new Date(),
-        })
-        .where(eq(challengeInstances.id, instanceId));
-
-      await auditService.record({
-        actorId: userId,
-        actorRole: 'participant',
-        actorIp: ipAddress,
-        action: 'challenge_instance_failed',
-        entityType: 'challenge_instance',
-        entityId: instanceId,
-        reason: 'Health check failed',
+        newState: { status: 'RUNNING', containerId: containerResult.containerId },
         detailsJson: { challengeId: challenge.id, teamId },
       });
 
-      throw new Error('INSTANCE_START_FAILED');
-    }
-
-    // 12. Transition to RUNNING state
-    const [runningInstance] = await db
-      .update(challengeInstances)
-      .set({
-        status: 'RUNNING',
-        containerId: containerResult.containerId,
-        internalIp: containerResult.internalIp,
-        startedAt: new Date(),
-        lastSeenAt: new Date(),
-      })
-      .where(eq(challengeInstances.id, instanceId))
-      .returning();
-
-    await auditService.record({
-      actorId: userId,
-      actorRole: 'participant',
-      actorIp: ipAddress,
-      action: 'challenge_instance_started',
-      entityType: 'challenge_instance',
-      entityId: instanceId,
-      newState: { status: 'RUNNING', containerId: containerResult.containerId },
-      detailsJson: { challengeId: challenge.id, teamId },
-    });
-
-    return this.formatInstanceSummary(runningInstance, challenge.slug);
+      return this.formatInstanceSummary(runningInstance, challenge.slug);
   }
 
   /**
@@ -355,60 +405,69 @@ export class DynamicChallengesService {
   }): Promise<void> {
     const { slug, userId, teamId, ipAddress } = params;
 
-    const [challenge] = await db
-      .select({ id: challenges.id, slug: challenges.slug })
-      .from(challenges)
-      .where(eq(challenges.slug, slug))
-      .limit(1);
+    return await this.withLock(`instance:${teamId}:${slug}`, async () => {
+      const [challenge] = await db
+        .select({ id: challenges.id, slug: challenges.slug })
+        .from(challenges)
+        .where(eq(challenges.slug, slug))
+        .limit(1);
 
-    if (!challenge) {
-      throw new Error('CHALLENGE_NOT_FOUND');
-    }
+      if (!challenge) {
+        throw new Error('CHALLENGE_NOT_FOUND');
+      }
 
-    const [instance] = await db
-      .select()
-      .from(challengeInstances)
-      .where(
-        and(
-          eq(challengeInstances.teamId, teamId),
-          eq(challengeInstances.challengeId, challenge.id),
-          inArray(challengeInstances.status, ['CREATING', 'RUNNING'])
+      const [instance] = await db
+        .select()
+        .from(challengeInstances)
+        .where(
+          and(
+            eq(challengeInstances.teamId, teamId),
+            eq(challengeInstances.challengeId, challenge.id),
+            inArray(challengeInstances.status, ['CREATING', 'RUNNING'])
+          )
         )
-      )
-      .limit(1);
+        .limit(1);
 
-    if (!instance) {
-      throw new Error('INSTANCE_NOT_FOUND');
-    }
+      if (!instance) {
+        throw new Error('INSTANCE_NOT_FOUND');
+      }
 
-    await db
-      .update(challengeInstances)
-      .set({ status: 'STOPPING' })
-      .where(eq(challengeInstances.id, instance.id));
+      await db
+        .update(challengeInstances)
+        .set({ status: 'STOPPING' })
+        .where(eq(challengeInstances.id, instance.id));
 
-    if (instance.containerId) {
-      await getDockerManager().stopAndRemoveContainer(instance.containerId).catch((err) => {
-        logger.warn({ err: err.message, containerId: instance.containerId }, 'Error stopping container');
+      if (instance.containerId) {
+        await getDockerManager().stopAndRemoveContainer(instance.containerId).catch((err) => {
+          logger.warn({ err: err.message, containerId: instance.containerId }, 'Error stopping container');
+        });
+      }
+
+      const networkName = `techx-inst-net-${instance.id.substring(0, 8)}`;
+      const backendContainer = this.getBackendContainerName();
+      if (backendContainer) {
+        await getDockerManager().disconnectContainer(networkName, backendContainer).catch(() => {});
+      }
+      await getDockerManager().removeNetwork(networkName).catch(() => {});
+
+      await db
+        .update(challengeInstances)
+        .set({
+          status: 'STOPPED',
+          stoppedAt: new Date(),
+        })
+        .where(eq(challengeInstances.id, instance.id));
+
+      await auditService.record({
+        actorId: userId,
+        actorRole: 'participant',
+        actorIp: ipAddress,
+        action: 'challenge_instance_stopped',
+        entityType: 'challenge_instance',
+        entityId: instance.id,
+        newState: { status: 'STOPPED' },
+        detailsJson: { challengeId: challenge.id, teamId },
       });
-    }
-
-    await db
-      .update(challengeInstances)
-      .set({
-        status: 'STOPPED',
-        stoppedAt: new Date(),
-      })
-      .where(eq(challengeInstances.id, instance.id));
-
-    await auditService.record({
-      actorId: userId,
-      actorRole: 'participant',
-      actorIp: ipAddress,
-      action: 'challenge_instance_stopped',
-      entityType: 'challenge_instance',
-      entityId: instance.id,
-      newState: { status: 'STOPPED' },
-      detailsJson: { challengeId: challenge.id, teamId },
     });
   }
 
@@ -424,68 +483,89 @@ export class DynamicChallengesService {
   }): Promise<InstanceSummary> {
     const { slug, userId, teamId, ipAddress, isAdmin = false } = params;
 
-    const [challenge] = await db
-      .select({ id: challenges.id, slug: challenges.slug })
-      .from(challenges)
-      .where(eq(challenges.slug, slug))
-      .limit(1);
-
-    if (!challenge) {
-      throw new Error('CHALLENGE_NOT_FOUND');
+    // 1. Competition Gate (Admins can bypass in development)
+    if (!isAdmin) {
+      await competitionService.requireLiveCompetition();
     }
 
-    // Stop existing instance if active
-    const [existing] = await db
-      .select()
-      .from(challengeInstances)
-      .where(
-        and(
-          eq(challengeInstances.teamId, teamId),
-          eq(challengeInstances.challengeId, challenge.id),
-          inArray(challengeInstances.status, ['CREATING', 'RUNNING'])
-        )
-      )
-      .limit(1);
+    return await this.withLock(`instance:${teamId}:${slug}`, async () => {
+      const [challenge] = await db
+        .select({ id: challenges.id, slug: challenges.slug })
+        .from(challenges)
+        .where(eq(challenges.slug, slug))
+        .limit(1);
 
-    if (existing) {
-      await db
-        .update(challengeInstances)
-        .set({ status: 'STOPPING' })
-        .where(eq(challengeInstances.id, existing.id));
-
-      if (existing.containerId) {
-        await getDockerManager().stopAndRemoveContainer(existing.containerId).catch(() => {});
+      if (!challenge) {
+        throw new Error('CHALLENGE_NOT_FOUND');
       }
 
-      await db
-        .update(challengeInstances)
-        .set({ status: 'STOPPED', stoppedAt: new Date() })
-        .where(eq(challengeInstances.id, existing.id));
+      // Stop existing instance if active
+      const [existing] = await db
+        .select()
+        .from(challengeInstances)
+        .where(
+          and(
+            eq(challengeInstances.teamId, teamId),
+            eq(challengeInstances.challengeId, challenge.id),
+            inArray(challengeInstances.status, ['CREATING', 'RUNNING'])
+          )
+        )
+        .limit(1);
 
-      await auditService.record({
-        actorId: userId,
-        actorRole: 'participant',
-        actorIp: ipAddress,
-        action: 'challenge_instance_reset',
-        entityType: 'challenge_instance',
-        entityId: existing.id,
-        detailsJson: { challengeId: challenge.id, teamId },
-      });
-    }
+      if (existing) {
+        await db
+          .update(challengeInstances)
+          .set({ status: 'STOPPING' })
+          .where(eq(challengeInstances.id, existing.id));
 
-    // Spin up fresh replacement
-    return await this.startInstance({ slug, userId, teamId, ipAddress, isAdmin });
+        if (existing.containerId) {
+          await getDockerManager().stopAndRemoveContainer(existing.containerId).catch(() => {});
+        }
+
+        const networkName = `techx-inst-net-${existing.id.substring(0, 8)}`;
+        const backendContainer = this.getBackendContainerName();
+        if (backendContainer) {
+          await getDockerManager().disconnectContainer(networkName, backendContainer).catch(() => {});
+        }
+        await getDockerManager().removeNetwork(networkName).catch(() => {});
+
+        await db
+          .update(challengeInstances)
+          .set({ status: 'STOPPED', stoppedAt: new Date() })
+          .where(eq(challengeInstances.id, existing.id));
+
+        await auditService.record({
+          actorId: userId,
+          actorRole: 'participant',
+          actorIp: ipAddress,
+          action: 'challenge_instance_reset',
+          entityType: 'challenge_instance',
+          entityId: existing.id,
+          detailsJson: { challengeId: challenge.id, teamId },
+        });
+      }
+
+      // Spin up fresh replacement (already holding lock)
+      if (this.startInstance !== DynamicChallengesService.prototype.startInstance) {
+        return await this.startInstance({ slug, userId, teamId, ipAddress, isAdmin });
+      }
+      return await this.executeStartInstance({ slug, userId, teamId, ipAddress, isAdmin });
+    });
   }
 
   /**
    * Resolves upstream proxy target strictly from database record for authenticated team.
-   * Zero arbitrary upstream proxying permitted (SSRF immune).
+   * Participant-controlled upstream host/IP parameters are not accepted.
+   * Proxy destinations are resolved exclusively from server-controlled challenge-instance metadata.
    */
   async getProxyTarget(params: {
     slug: string;
     teamId: string;
   }): Promise<{ internalIp: string; internalPort: number }> {
     const { slug, teamId } = params;
+
+    // Gate: Verify live competition state
+    await competitionService.requireLiveCompetition();
 
     const [challenge] = await db
       .select({ id: challenges.id })
@@ -525,7 +605,7 @@ export class DynamicChallengesService {
   }
 
   /**
-   * Transitions an instance to EXPIRED and cleans up associated container.
+   * Transitions an instance to EXPIRED and cleans up associated container and network.
    */
   public async expireInstance(instanceId: string): Promise<void> {
     const [instance] = await db
@@ -544,6 +624,13 @@ export class DynamicChallengesService {
     if (instance.containerId) {
       await getDockerManager().stopAndRemoveContainer(instance.containerId).catch(() => {});
     }
+
+    const networkName = `techx-inst-net-${instance.id.substring(0, 8)}`;
+    const backendContainer = this.getBackendContainerName();
+    if (backendContainer) {
+      await getDockerManager().disconnectContainer(networkName, backendContainer).catch(() => {});
+    }
+    await getDockerManager().removeNetwork(networkName).catch(() => {});
 
     await db
       .update(challengeInstances)
@@ -588,6 +675,12 @@ export class DynamicChallengesService {
     };
   }
 
+  private getBackendContainerName(): string | undefined {
+    return (
+      process.env.BACKEND_CONTAINER_NAME ||
+      (process.env.NODE_ENV === 'production' ? 'techx_ctf_backend' : undefined)
+    );
+  }
 }
 
 export const dynamicChallengesService = new DynamicChallengesService();

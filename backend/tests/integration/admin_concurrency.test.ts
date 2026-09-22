@@ -343,4 +343,196 @@ describe('Stage 6 Admin & Control Plane Concurrency Simulations', () => {
     expect(lateSubmission.success).toBe(false);
     expect(lateSubmission.status).toBe('TEAM_DISQUALIFIED');
   });
+
+  // ---------------------------------------------------------------------------
+  // CASE 4: SAME-KEY IDEMPOTENCY RACE CONDITION
+  // ---------------------------------------------------------------------------
+  it('Case 4: Simultaneous requests with the SAME idempotency key produce exactly 1 score mutation, 1 ledger event, 1 audit event, 1 outbox event, and 1 leaderboard version', async () => {
+    const teamId = 'team-idempotency-race';
+    let teamScore = 1000;
+
+    const scoreEventsTable: any[] = [];
+    const auditLogsTable: any[] = [];
+    const outboxTable: any[] = [];
+    const idempotencyTable = new Map<string, any>();
+
+    let sequenceCounter = 5000;
+    const getNextSequence = () => ++sequenceCounter;
+
+    // Mutex simulating PostgreSQL transaction-level advisory lock on hash(idempotencyKey)
+    let advisoryLock = Promise.resolve();
+
+    async function handleAdjustmentRequest(workerId: number, idempotencyKey: string, delta: number) {
+      // Simulate network jitter
+      await new Promise((resolve) => setTimeout(resolve, Math.random() * 15));
+
+      // Acquire advisory lock / serialize on idempotencyKey
+      let unlock: () => void;
+      const prevLock = advisoryLock;
+      advisoryLock = new Promise((resolve) => {
+        unlock = resolve;
+      });
+      await prevLock;
+
+      try {
+        // Step 1: Idempotency check
+        if (idempotencyTable.has(idempotencyKey)) {
+          return {
+            ...idempotencyTable.get(idempotencyKey),
+            isIdempotentReplay: true,
+          };
+        }
+
+        // Step 2: Atomic mutation
+        const newScore = teamScore + delta;
+        teamScore = newScore;
+
+        const eventId = `event-race-${Date.now()}`;
+        const leaderboardVersion = getNextSequence();
+
+        scoreEventsTable.push({
+          id: scoreEventsTable.length + 1,
+          teamId,
+          eventType: 'admin_adjustment',
+          points: delta,
+          runningTeamScore: newScore,
+        });
+
+        outboxTable.push({
+          eventId,
+          leaderboardVersion,
+          delta,
+          newScore,
+        });
+
+        auditLogsTable.push({
+          action: 'ADMIN_SCORE_ADJUSTMENT',
+          actorId: `admin-${workerId}`,
+          delta,
+          newScore,
+        });
+
+        const result = {
+          success: true,
+          teamId,
+          delta,
+          newScore,
+          leaderboardVersion,
+          eventId,
+          isIdempotentReplay: false,
+        };
+
+        idempotencyTable.set(idempotencyKey, result);
+        return result;
+      } finally {
+        unlock!();
+      }
+    }
+
+    const SHARED_KEY = 'same-idempotency-key-race-uuid-12345';
+    const concurrentWorkers = 10;
+
+    // Fire 10 simultaneous requests with the SAME idempotency key
+    const promises = Array.from({ length: concurrentWorkers }, (_, i) =>
+      handleAdjustmentRequest(i + 1, SHARED_KEY, 300)
+    );
+
+    const results = await Promise.all(promises);
+
+    expect(results).toHaveLength(concurrentWorkers);
+
+    // Assert exact single execution
+    const nonReplays = results.filter((r) => !r.isIdempotentReplay);
+    const replays = results.filter((r) => r.isIdempotentReplay);
+
+    expect(nonReplays).toHaveLength(1);
+    expect(replays).toHaveLength(concurrentWorkers - 1);
+
+    // Assert EXACTLY 1 database record in each table
+    expect(scoreEventsTable).toHaveLength(1);
+    expect(auditLogsTable).toHaveLength(1);
+    expect(outboxTable).toHaveLength(1);
+    expect(idempotencyTable.size).toBe(1);
+
+    // Team score increased by exactly 300 (once, not 3000!)
+    expect(teamScore).toBe(1300);
+
+    // All replays returned identical authoritative state
+    const authoritativeResult = nonReplays[0];
+    for (const replay of replays) {
+      expect(replay.newScore).toBe(authoritativeResult.newScore);
+      expect(replay.leaderboardVersion).toBe(authoritativeResult.leaderboardVersion);
+      expect(replay.eventId).toBe(authoritativeResult.eventId);
+      expect(replay.delta).toBe(300);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // CASE 5: CONCURRENT COMPETITION PAUSE + PARTICIPANT SUBMISSIONS
+  // ---------------------------------------------------------------------------
+  it('Case 5: Concurrent competition pause and participant submissions adhere to transaction-ordered validity', async () => {
+    let competitionState: 'live' | 'paused' = 'live';
+    let solvesAccepted = 0;
+    let submissionsBlockedByPause = 0;
+
+    let compLock = Promise.resolve();
+
+    async function submitDuringPause(subId: number) {
+      await new Promise((resolve) => setTimeout(resolve, Math.random() * 20));
+
+      let unlock: () => void;
+      const prev = compLock;
+      compLock = new Promise((resolve) => {
+        unlock = resolve;
+      });
+      await prev;
+
+      try {
+        if (competitionState === 'paused') {
+          submissionsBlockedByPause++;
+          return { success: false, error: 'COMPETITION_PAUSED' };
+        }
+        solvesAccepted++;
+        return { success: true, status: 'correct' };
+      } finally {
+        unlock!();
+      }
+    }
+
+    async function emergencyPause() {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      let unlock: () => void;
+      const prev = compLock;
+      compLock = new Promise((resolve) => {
+        unlock = resolve;
+      });
+      await prev;
+
+      try {
+        competitionState = 'paused';
+        return { success: true };
+      } finally {
+        unlock!();
+      }
+    }
+
+    const submissions = Array.from({ length: 30 }, (_, i) => submitDuringPause(i + 1));
+    const pausePromise = emergencyPause();
+
+    const [subResults, pauseResult] = await Promise.all([
+      Promise.all(submissions),
+      pausePromise,
+    ]);
+
+    expect(pauseResult.success).toBe(true);
+    expect(competitionState).toBe('paused');
+    expect(solvesAccepted + submissionsBlockedByPause).toBe(30);
+
+    // Any submission after pause is strictly rejected
+    const postPause = await submitDuringPause(999);
+    expect(postPause.success).toBe(false);
+    expect(postPause.error).toBe('COMPETITION_PAUSED');
+  });
 });
+

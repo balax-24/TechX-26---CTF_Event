@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/app.js';
 import { AuthUser } from '../../src/types/auth.js';
+import { generateCsrfToken } from '../../src/middleware/csrf.middleware.js';
 
 describe('Admin RBAC & Route Isolation Matrix', () => {
   let app: FastifyInstance;
@@ -226,20 +227,22 @@ describe('Admin RBAC & Route Isolation Matrix', () => {
       expect(JSON.parse(res.body).message).toMatch(/CSRF/i);
     });
 
-    it('allows state-changing request authenticated via cookie when X-CTF-Admin header is present', async () => {
+    it('allows state-changing request authenticated via cookie when valid CSRF token and origin are present', async () => {
+      const csrfToken = generateCsrfToken('a0000000-0000-0000-0000-000000000001');
       const res = await app.inject({
         method: 'POST',
         url: '/api/v1/admin/competition/pause',
-        cookies: { access_token: adminToken },
+        cookies: { access_token: adminToken, csrf_token: csrfToken },
         headers: {
-          'x-ctf-admin': '1',
+          'x-csrf-token': csrfToken,
+          origin: 'http://localhost:5173',
         },
         payload: { reason: 'emergency pause with csrf header' },
       });
 
       // Passed CSRF check (may be 200 or downstream domain error, but NOT 403 CSRF)
       if (res.statusCode === 403) {
-        expect(JSON.parse(res.body).message).not.toMatch(/CSRF verification failed/i);
+        expect(JSON.parse(res.body).message).not.toMatch(/CSRF verification failed|CSRF token invalid|CSRF token required/i);
       }
     });
 

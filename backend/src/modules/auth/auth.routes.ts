@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { authService } from './auth.service.js';
 import { registerSchema, loginSchema } from './auth.schema.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
+import { generateCsrfToken } from '../../middleware/csrf.middleware.js';
 import { config } from '../../config/env.js';
 
 export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
@@ -26,9 +27,19 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         teamRole: null,
       });
 
+      const csrfToken = generateCsrfToken(result.user.id);
+
       reply.setCookie('access_token', token, {
         path: '/',
         httpOnly: true,
+        secure: config.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 86400,
+      });
+
+      reply.setCookie('csrf_token', csrfToken, {
+        path: '/',
+        httpOnly: false,
         secure: config.NODE_ENV === 'production',
         sameSite: 'lax',
         maxAge: 86400,
@@ -39,6 +50,7 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         user: result.user,
         team: null,
         token,
+        csrfToken,
       });
     } catch (err: any) {
       if (err.message === 'USERNAME_EXISTS') {
@@ -76,9 +88,19 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         teamRole: result.team?.role || null,
       });
 
+      const csrfToken = generateCsrfToken(result.user.id);
+
       reply.setCookie('access_token', token, {
         path: '/',
         httpOnly: true,
+        secure: config.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 86400,
+      });
+
+      reply.setCookie('csrf_token', csrfToken, {
+        path: '/',
+        httpOnly: false,
         secure: config.NODE_ENV === 'production',
         sameSite: 'lax',
         maxAge: 86400,
@@ -89,6 +111,7 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         user: result.user,
         team: result.team,
         token,
+        csrfToken,
       });
     } catch (err: any) {
       req.log.error({ err }, 'Login error');
@@ -101,6 +124,7 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // ---------------------------------------------------------------------------
   app.post('/logout', async (_req, reply) => {
     reply.clearCookie('access_token', { path: '/' });
+    reply.clearCookie('csrf_token', { path: '/' });
     return reply.send({
       success: true,
       message: 'Logged out successfully',
@@ -108,7 +132,22 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // ---------------------------------------------------------------------------
-  // 4. CURRENT USER PROFILE (/me)
+  // 4. CSRF TOKEN RETRIEVAL (/csrf)
+  // ---------------------------------------------------------------------------
+  app.get('/csrf', { preHandler: [authenticate] }, async (req, reply) => {
+    const csrfToken = generateCsrfToken(req.user!.id);
+    reply.setCookie('csrf_token', csrfToken, {
+      path: '/',
+      httpOnly: false,
+      secure: config.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 86400,
+    });
+    return reply.send({ csrfToken });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 5. CURRENT USER PROFILE (/me)
   // ---------------------------------------------------------------------------
   app.get('/me', { preHandler: [authenticate] }, async (req, reply) => {
     try {

@@ -759,13 +759,29 @@ export class ScoringService {
       throw new Error('INVALID_SCORE_DELTA: Adjustment delta must be a non-zero integer');
     }
 
+    if (!Number.isInteger(delta)) {
+      throw new Error('INVALID_SCORE_DELTA: Adjustment delta must be an integer');
+    }
+
+    if (Math.abs(delta) > 100_000) {
+      throw new Error('INVALID_SCORE_DELTA: Delta exceeds maximum allowable threshold (+/- 100,000)');
+    }
+
     if (!reason || reason.trim().length < 5) {
       throw new Error('REASON_REQUIRED: A valid reason of at least 5 characters is required');
     }
 
     return await db.transaction(async (tx) => {
-      // 1. Idempotency Check
+      // 1. Idempotency Check with pessimistic lock / serialization across API instances
       if (idempotencyKey) {
+        try {
+          // Acquire transaction-level advisory lock on hash of idempotencyKey
+          // Ensures concurrent requests with identical idempotencyKey serialize across API instances
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${idempotencyKey}))`);
+        } catch {
+          // Fallback if db does not support pg_advisory_xact_lock (e.g. SQLite / unit test mock)
+        }
+
         try {
           const [existingKey] = await tx
             .select()
@@ -797,6 +813,16 @@ export class ScoringService {
 
       const previousScore = team.score;
       const newScore = previousScore + delta; // Ledger sums exact deltas
+
+      // Stage 4 score invariant: team scores cannot drop below 0
+      if (newScore < 0) {
+        throw new Error('SCORE_UNDERFLOW_PROHIBITED: Resulting team score cannot drop below zero');
+      }
+
+      // Safe integer bounds
+      if (newScore > 2147483647) {
+        throw new Error('SCORE_OVERFLOW_PROHIBITED: Resulting team score exceeds maximum integer range');
+      }
 
       // 3. Update team score and tie-break timestamp
       await tx
@@ -883,12 +909,32 @@ export class ScoringService {
       // 8. Store idempotency key if provided
       if (idempotencyKey) {
         try {
-          await tx.insert(adminIdempotencyKeys).values({
-            key: idempotencyKey,
-            action: 'admin_score_adjustment',
-            actorId: actorUserId,
-            responseJson: result,
-          });
+          const inserted = await tx
+            .insert(adminIdempotencyKeys)
+            .values({
+              key: idempotencyKey,
+              action: 'admin_score_adjustment',
+              actorId: actorUserId,
+              responseJson: result,
+            })
+            .onConflictDoNothing()
+            .returning({ key: adminIdempotencyKeys.key });
+
+          if (inserted.length === 0) {
+            // Concurrent race resolved by DB constraint: return authoritative cached result
+            const [existing] = await tx
+              .select()
+              .from(adminIdempotencyKeys)
+              .where(eq(adminIdempotencyKeys.key, idempotencyKey))
+              .limit(1);
+
+            if (existing) {
+              return {
+                ...(existing.responseJson as AdminAdjustmentResult),
+                isIdempotentReplay: true,
+              };
+            }
+          }
         } catch {
           // Ignore if idempotency table uninitialized in mock tests
         }

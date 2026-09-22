@@ -150,12 +150,16 @@ Under no circumstances does the system expose `UPDATE score_events` or `DELETE F
 ### Implementation
 1. **Immutable Ledger Append**:
    Every adjustment inserts a new row into `score_events` with `eventType: 'admin_adjustment'` and `points: delta` (positive for bonuses/compensation, negative for penalties).
-2. **Stage 4 Reconciliation Guarantee**:
+2. **Bounds & Floor Invariants**:
+   - Delta must be a non-zero integer bounded within $[-100,000, +100,000]$.
+   - Resulting score cannot drop below zero (`newScore >= 0`); throws `SCORE_UNDERFLOW_PROHIBITED` if underflow is attempted.
+   - Resulting score cannot exceed 32-bit integer bounds (`newScore <= 2147483647`).
+3. **Stage 4 Reconciliation Guarantee**:
    $$\text{teams.score} = \sum_{\text{events}} \text{score\_events.points}$$
    Because adjustments are ledger deltas, the Stage 4 mathematical invariant holds perpetually.
-3. **Idempotency Protection**:
-   When an `idempotencyKey` is provided (via payload or `Idempotency-Key` header), the operation result is cached in `admin_idempotency_keys`. Retried requests return the cached result with `isIdempotentReplay: true` without duplicating ledger rows or mutating scores twice.
-4. **Outbox & Leaderboard Integration**:
+4. **Database-Level Idempotency Protection**:
+   When an `idempotencyKey` is provided (via payload or `Idempotency-Key` header), concurrent requests serialize across API instances using `pg_advisory_xact_lock(hashtext(key))`. The result is cached in `admin_idempotency_keys` (`PRIMARY KEY (key)`). Concurrent racing requests and replayed requests receive the cached authoritative result with `isIdempotentReplay: true` without duplicating ledger rows, outbox events, audit records, or leaderboard versions.
+5. **Outbox & Leaderboard Integration**:
    Every adjustment obtains the next monotonic version from `leaderboard_version_seq`, inserts a record into `score_event_outbox`, triggers the outbox worker, and updates the real-time SSE stream.
 
 ---
@@ -171,18 +175,26 @@ Every administrative mutation records an entry in `audit_logs` within the mutati
 - `requestId`.
 
 ### Cryptographic Secret Redaction
-`sanitizeAuditData` recursively redacts any keys matching `password`, `flag`, `secret`, `token`, `hmac`, `hash`, or `invite` with `[REDACTED]`. Plaintext secrets or credentials are never written to the audit log.
+`sanitizeAuditData` recursively redacts sensitive credentials (passwords, password hashes, raw flags, submitted flags, secret proofs, tokens, HMAC keys, invite codes) with `[REDACTED]`. Legitimate non-secret operational metadata (e.g. `flagCount`, `flagFormat`, `hashAlgorithm`, `commitHash`, `points`, `status`) is preserved for forensic reconstruction.
 
-No endpoints exist to update or delete audit logs.
+No endpoints exist to update or delete audit logs. The audit log is strictly append-only.
 
 ---
 
 ## 8. CSRF & Concurrency Protections
 
-1. **CSRF Protection**:
-   - Non-ambient Bearer token requests (used by CLI/curl) are exempt.
-   - Ambient HttpOnly cookie-authenticated requests require an anti-CSRF custom header (`X-CSRF-Token` or `X-CTF-Admin` or `X-Requested-With`).
-   - In production, requests must match configured CORS origins.
+1. **CSRF Defense-in-Depth Model**:
+   - Safe HTTP methods (`GET`, `HEAD`, `OPTIONS`) bypass CSRF checks.
+   - Non-ambient Bearer token requests (used by CLI, test suites, programmatic API clients) bypass CSRF checks.
+   - Ambient HttpOnly cookie-authenticated mutations (`POST`, `PUT`, `PATCH`, `DELETE`) enforce a 4-layer defense:
+     1. **Session Authentication**: Caller must possess a valid, server-verified JWT in `access_token` cookie.
+     2. **Origin & Referer Verification**: Origin must match allowed `CORS_ORIGIN` entries; cross-origin requests are blocked with `403 ORIGIN_NOT_ALLOWED`.
+     3. **Session-Bound Cryptographic CSRF Token**: Client must provide `X-CSRF-Token` header containing `<16-byte-nonce>.<hmac-sha256(nonce:userId, COOKIE_SECRET)>`. The server verifies cryptographic integrity and constant-time user binding.
+     4. **Double-Submit Cookie Match**: If `csrf_token` cookie is present, it must match the header token.
 2. **Concurrency Protections**:
    - `SELECT ... FOR UPDATE` row-level locks on `teams` and `competition_state`.
-   - Verified safe against 100 simultaneous score adjustments across multiple API instances (zero lost updates, 100 unique leaderboard versions, 100 audit entries).
+   - Authoritative challenge & checkpoint immutability checking persisted database tables (`teamSolves`, `scoreEvents`, `checkpointProgress`, `challenges.solveCount`).
+   - Checkpoint point invariant `sum(checkpoints) <= challenge.points` enforced on create and update.
+   - Checkpoint deletion and scoring-critical mutations locked once historical activity exists (`CHALLENGE_LOCKED_FOR_SCORING`).
+   - Team status is the single source of truth (`team.status`), with `isBanned` synchronized strictly for backward compatibility.
+   - Bounded pagination (`limit` capped at 100, deterministic tie-breaking sorting) on all admin listing endpoints.

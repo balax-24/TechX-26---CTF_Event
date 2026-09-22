@@ -54,6 +54,17 @@ export const createCheckpointAdminSchema = z.object({
 
 export type CreateCheckpointAdminInput = z.infer<typeof createCheckpointAdminSchema>;
 
+export const updateCheckpointAdminSchema = z.object({
+  stepNumber: z.number().int().min(1).optional(),
+  title: z.string().min(2).max(100).optional(),
+  description: z.string().max(2000).optional(),
+  pointValue: z.number().int().min(0).optional(),
+  validationType: z.enum(['token_proof', 'manual_approval']).optional(),
+  secretProof: z.string().min(1).optional(),
+});
+
+export type UpdateCheckpointAdminInput = z.infer<typeof updateCheckpointAdminSchema>;
+
 export const createHintAdminSchema = z.object({
   orderNumber: z.number().int().min(1),
   content: z.string().min(3),
@@ -80,7 +91,11 @@ export const renameTeamSchema = z.object({
 export type RenameTeamInput = z.infer<typeof renameTeamSchema>;
 
 export const adminScoreAdjustmentSchema = z.object({
-  delta: z.number().int().refine((val) => val !== 0, 'Adjustment delta must be a non-zero integer'),
+  delta: z
+    .number()
+    .int()
+    .refine((val) => val !== 0, 'Adjustment delta must be a non-zero integer')
+    .refine((val) => Math.abs(val) <= 100_000, 'Adjustment delta must be between -100,000 and +100,000'),
   reason: z.string().min(5, 'A clear reason of at least 5 characters is required for score adjustments'),
   idempotencyKey: z.string().max(128).optional(),
 });
@@ -101,8 +116,15 @@ export const setUserRoleSchema = z.object({
 });
 
 // -----------------------------------------------------------------------------
-// 4. AUDIT LOG QUERY SCHEMA
+// 4. AUDIT LOG & LIST QUERY SCHEMAS
 // -----------------------------------------------------------------------------
+export const paginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export type PaginationQuery = z.infer<typeof paginationQuerySchema>;
+
 export const auditLogQuerySchema = z.object({
   action: z.string().optional(),
   entityType: z.string().optional(),

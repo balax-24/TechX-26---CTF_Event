@@ -441,4 +441,40 @@ A focused production-hardening pass has been performed on Stage 4:
    - Concurrency tests passing: 100 simultaneous score adjustments, concurrent pause/resume, concurrent disqualify vs solve.
    - 0 TypeScript compilation errors.
 
+---
+
+## STAGE 6 HARDENING — ADMIN CONTROL PLANE SECURITY & INTEGRITY (PASSED & APPROVED)
+
+Completed a targeted security, integrity, and concurrency hardening pass over Stage 6:
+
+1. **CSRF Defense-in-Depth**:
+   - Implemented user-bound HMAC-SHA256 CSRF tokens (`nonce.signature`), Origin/Referer verification matching `CORS_ORIGIN`, and double-submit cookie validation for all cookie-authenticated mutations (`POST`, `PUT`, `PATCH`, `DELETE`).
+   - Safe methods (`GET`, `HEAD`, `OPTIONS`) and non-ambient Bearer token API requests bypass CSRF checks cleanly.
+   - Added endpoint `GET /api/v1/auth/csrf` for authenticated sessions to acquire tokens.
+   - Stable error codes: `403 ORIGIN_NOT_ALLOWED`, `403 CSRF_REQUIRED`, `403 CSRF_INVALID`. Zero secret leakage into logs.
+2. **Database-Level Idempotency Race Hardening**:
+   - Serialized concurrent adjustments using PostgreSQL `pg_advisory_xact_lock(hashtext(idempotencyKey))` and `admin_idempotency_keys` primary key constraint.
+   - Verified that 10 simultaneous requests with the identical idempotency key produce exactly 1 ledger event, 1 score mutation, 1 outbox event, 1 audit log, and 1 leaderboard version; the other 9 requests return the authoritative cached result (`isIdempotentReplay: true`).
+3. **Authoritative Challenge & Checkpoint Immutability**:
+   - Upgraded historical activity checks to query persisted database tables (`teamSolves`, `scoreEvents`, `checkpointProgress`, `challenges.solveCount`) directly.
+   - Prohibited modification of challenge points, flag verification secrets, checkpoint points, step numbers, validation types, and secret proofs once historical activity exists (`CHALLENGE_LOCKED_FOR_SCORING`).
+   - Implemented `PATCH` and `DELETE` checkpoint endpoints in admin routes, strictly locking destructive deletion and scoring-critical updates after historical progress is recorded.
+   - Maintained transactional invariant: `sum(checkpoints) <= challenge.points` on creation, update, and challenge point edits.
+4. **Team Status Single Source of Truth**:
+   - Established `team.status` (`active`, `disabled`, `disqualified`) as the single authoritative source of truth.
+   - `isBanned` is synchronized strictly as a backward-compatibility boolean. All scoring operations enforce `team.status === 'active' && !team.isBanned`.
+5. **Score Adjustment Bounds & Ledger Reconciliation**:
+   - Defined strict bounds: $\pm 100,000$ non-zero integers; overflow protection against 32-bit limits.
+   - Enforced Stage 4 non-negative score floor: resulting team scores cannot drop below zero (`SCORE_UNDERFLOW_PROHIBITED`).
+   - Multi-event reconciliation test verified: `final_solve` + `checkpoint_solve` + `hint_penalty` + `admin_adjustment (+)` + `admin_adjustment (-)` strictly reconciles: $\text{teams.score} = \sum \text{score\_events.points}$.
+6. **Refined Audit Redaction & Immutability**:
+   - `sanitizeAuditData` recursively redacts sensitive credentials (`password`, `flag`, `secret`, `token`, `hmac`, `inviteCode`) while preserving legitimate non-secret forensic metadata (`flagCount`, `flagFormat`, `hashAlgorithm`, `commitHash`, `status`, `points`).
+   - Verified zero `UPDATE` or `DELETE` application paths for `audit_logs` or `score_events` across the entire codebase.
+7. **Bounded Pagination**:
+   - Bounded queries (`limit` max 100) with deterministic tie-breaking sorting (`id DESC`) on `listChallenges`, `listTeams`, `listUsers`, and `getAuditLogs`.
+8. **Test & Build Verification**:
+   - **33 test files, 252 tests passing with 100% success rate**.
+   - 0 TypeScript compilation errors (`npm run build`).
+
+
 

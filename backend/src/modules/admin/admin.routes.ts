@@ -11,12 +11,14 @@ import {
   updateChallengeAdminSchema,
   setChallengeStatusSchema,
   createCheckpointAdminSchema,
+  updateCheckpointAdminSchema,
   createHintAdminSchema,
   setTeamStatusSchema,
   renameTeamSchema,
   adminScoreAdjustmentSchema,
   setUserActiveSchema,
   setUserRoleSchema,
+  paginationQuerySchema,
   auditLogQuerySchema,
 } from './admin.schema.js';
 import {
@@ -156,8 +158,10 @@ export const adminRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // 2. CHALLENGE ADMINISTRATION
   // ---------------------------------------------------------------------------
 
-  app.get('/challenges', async (_req, reply) => {
-    const challenges = await adminService.listChallenges();
+  app.get('/challenges', async (req, reply) => {
+    const parseResult = paginationQuerySchema.safeParse(req.query);
+    const pagination = parseResult.success ? parseResult.data : undefined;
+    const challenges = await adminService.listChallenges(pagination);
     return reply.send(challenges);
   });
 
@@ -255,6 +259,51 @@ export const adminRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  app.patch('/challenges/:id/checkpoints/:checkpointId', async (req, reply) => {
+    const { id, checkpointId } = req.params as { id: string; checkpointId: string };
+    const parseResult = updateCheckpointAdminSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.badRequest(parseResult.error.errors[0].message);
+    }
+
+    try {
+      const updated = await adminService.updateCheckpoint(
+        id,
+        checkpointId,
+        parseResult.data,
+        getActor(req)
+      );
+      return reply.send(updated);
+    } catch (err: any) {
+      if (err.message.includes('CHALLENGE_LOCKED_FOR_SCORING')) {
+        return reply.status(409).send({ error: 'CHALLENGE_LOCKED', message: err.message });
+      }
+      if (err.message.includes('INVALID_CHECKPOINT_POINTS')) {
+        return reply.badRequest(err.message);
+      }
+      if (err.message === 'CHALLENGE_NOT_FOUND' || err.message === 'CHECKPOINT_NOT_FOUND') {
+        return reply.notFound(err.message);
+      }
+      return reply.badRequest(err.message);
+    }
+  });
+
+  app.delete('/challenges/:id/checkpoints/:checkpointId', async (req, reply) => {
+    const { id, checkpointId } = req.params as { id: string; checkpointId: string };
+    try {
+      const result = await adminService.deleteCheckpoint(id, checkpointId, getActor(req));
+      return reply.send(result);
+    } catch (err: any) {
+      if (err.message.includes('CHALLENGE_LOCKED_FOR_SCORING')) {
+        return reply.status(409).send({ error: 'CHALLENGE_LOCKED', message: err.message });
+      }
+      if (err.message === 'CHALLENGE_NOT_FOUND' || err.message === 'CHECKPOINT_NOT_FOUND') {
+        return reply.notFound(err.message);
+      }
+      return reply.badRequest(err.message);
+    }
+  });
+
   app.post('/challenges/:id/hints', async (req, reply) => {
     const { id } = req.params as { id: string };
     const parseResult = createHintAdminSchema.safeParse(req.body);
@@ -274,8 +323,10 @@ export const adminRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // 3. TEAM MODERATION & SCORE ADJUSTMENTS
   // ---------------------------------------------------------------------------
 
-  app.get('/teams', async (_req, reply) => {
-    const teams = await adminService.listTeams();
+  app.get('/teams', async (req, reply) => {
+    const parseResult = paginationQuerySchema.safeParse(req.query);
+    const pagination = parseResult.success ? parseResult.data : undefined;
+    const teams = await adminService.listTeams(pagination);
     return reply.send(teams);
   });
 
@@ -378,8 +429,10 @@ export const adminRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // 4. USER MODERATION
   // ---------------------------------------------------------------------------
 
-  app.get('/users', async (_req, reply) => {
-    const users = await adminService.listUsers();
+  app.get('/users', async (req, reply) => {
+    const parseResult = paginationQuerySchema.safeParse(req.query);
+    const pagination = parseResult.success ? parseResult.data : undefined;
+    const users = await adminService.listUsers(pagination);
     return reply.send(users);
   });
 

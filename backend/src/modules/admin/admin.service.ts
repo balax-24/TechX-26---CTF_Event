@@ -3,6 +3,7 @@ import { db } from '../../db/index.js';
 import {
   challenges,
   checkpoints,
+  checkpointProgress,
   hints,
   categories,
   teams,
@@ -17,15 +18,56 @@ import {
   CreateChallengeAdminInput,
   UpdateChallengeAdminInput,
   CreateCheckpointAdminInput,
+  UpdateCheckpointAdminInput,
   CreateHintAdminInput,
+  PaginationQuery,
 } from './admin.schema.js';
+
+/**
+ * Authoritatively inspects whether a challenge has historical scoring activity, solves, or checkpoint progress.
+ * Queries persisted tables (teamSolves, scoreEvents, checkpointProgress, challenges) directly.
+ */
+export async function checkChallengeHistoricalActivity(tx: any, challengeId: string): Promise<boolean> {
+  const [solves] = await tx
+    .select({ count: count() })
+    .from(teamSolves)
+    .where(eq(teamSolves.challengeId, challengeId));
+
+  const [scoreEvs] = await tx
+    .select({ count: count() })
+    .from(scoreEvents)
+    .where(eq(scoreEvents.challengeId, challengeId));
+
+  const [cpProg] = await tx
+    .select({ count: count() })
+    .from(checkpointProgress)
+    .innerJoin(checkpoints, eq(checkpointProgress.checkpointId, checkpoints.id))
+    .where(eq(checkpoints.challengeId, challengeId));
+
+  const [chal] = await tx
+    .select({ solveCount: challenges.solveCount })
+    .from(challenges)
+    .where(eq(challenges.id, challengeId))
+    .limit(1);
+
+  return (
+    (solves?.count || 0) > 0 ||
+    (scoreEvs?.count || 0) > 0 ||
+    (cpProg?.count || 0) > 0 ||
+    (chal?.solveCount || 0) > 0
+  );
+}
 
 export class AdminService {
   // ---------------------------------------------------------------------------
   // 1. CHALLENGE ADMINISTRATION
   // ---------------------------------------------------------------------------
 
-  async listChallenges(): Promise<any[]> {
+  async listChallenges(params?: PaginationQuery): Promise<any[]> {
+    const page = Math.max(1, params?.page || 1);
+    const limit = Math.min(100, Math.max(1, params?.limit || 50));
+    const offset = (page - 1) * limit;
+
     const chalList = await db
       .select({
         id: challenges.id,
@@ -45,7 +87,9 @@ export class AdminService {
       })
       .from(challenges)
       .innerJoin(categories, eq(challenges.categoryId, categories.id))
-      .orderBy(desc(challenges.createdAt));
+      .orderBy(desc(challenges.createdAt), challenges.id)
+      .limit(limit)
+      .offset(offset);
 
     return chalList;
   }
@@ -183,20 +227,14 @@ export class AdminService {
         throw new Error('CHALLENGE_NOT_FOUND');
       }
 
-      // Check if challenge has historical scoring activity (solves or checkpoint progress)
-      const hasSolves = current.solveCount > 0;
-      const [scoreEventCount] = await tx
-        .select({ count: count() })
-        .from(scoreEvents)
-        .where(eq(scoreEvents.challengeId, id));
-
-      const hasActivity = hasSolves || (scoreEventCount?.count || 0) > 0;
+      // Check authoritatively if challenge has historical scoring activity (solves, ledger events, or checkpoint progress)
+      const hasActivity = await checkChallengeHistoricalActivity(tx, id);
 
       // IMMUTABILITY RULE: Freeze scoring-critical properties if historical activity exists
       if (hasActivity) {
         if (input.points !== undefined && input.points !== current.points) {
           throw new Error(
-            'CHALLENGE_LOCKED_FOR_SCORING: Cannot modify points on a challenge with active solves. Use administrative score adjustments instead.'
+            'CHALLENGE_LOCKED_FOR_SCORING: Cannot modify points on a challenge with active solves or scoring events. Use administrative score adjustments instead.'
           );
         }
         if (input.flag !== undefined) {
@@ -286,9 +324,10 @@ export class AdminService {
         throw new Error('CHALLENGE_NOT_FOUND');
       }
 
-      if (chal.solveCount > 0) {
+      const hasActivity = await checkChallengeHistoricalActivity(tx, challengeId);
+      if (hasActivity) {
         throw new Error(
-          'CHALLENGE_LOCKED_FOR_SCORING: Cannot add checkpoints to a challenge with active solves'
+          'CHALLENGE_LOCKED_FOR_SCORING: Cannot add checkpoints to a challenge with active solves or scoring events'
         );
       }
 
@@ -345,6 +384,193 @@ export class AdminService {
     });
   }
 
+  async updateCheckpoint(
+    challengeId: string,
+    checkpointId: string,
+    input: UpdateCheckpointAdminInput,
+    actor: { id: string; role: string; ip: string; requestId?: string }
+  ): Promise<any> {
+    return await db.transaction(async (tx) => {
+      const [chal] = await tx
+        .select()
+        .from(challenges)
+        .where(eq(challenges.id, challengeId))
+        .for('update');
+
+      if (!chal) {
+        throw new Error('CHALLENGE_NOT_FOUND');
+      }
+
+      const [currentCp] = await tx
+        .select()
+        .from(checkpoints)
+        .where(and(eq(checkpoints.id, checkpointId), eq(checkpoints.challengeId, challengeId)))
+        .for('update');
+
+      if (!currentCp) {
+        throw new Error('CHECKPOINT_NOT_FOUND');
+      }
+
+      // Check authoritative historical activity for this checkpoint / challenge
+      const [cpProg] = await tx
+        .select({ count: count() })
+        .from(checkpointProgress)
+        .where(eq(checkpointProgress.checkpointId, checkpointId));
+
+      const hasHistory = (cpProg?.count || 0) > 0 || (await checkChallengeHistoricalActivity(tx, challengeId));
+
+      // IMMUTABILITY: If historical activity exists, scoring-critical properties are locked
+      if (hasHistory) {
+        if (input.pointValue !== undefined && input.pointValue !== currentCp.pointValue) {
+          throw new Error(
+            'CHALLENGE_LOCKED_FOR_SCORING: Cannot modify checkpoint points after historical scoring activity has been recorded'
+          );
+        }
+        if (input.stepNumber !== undefined && input.stepNumber !== currentCp.stepNumber) {
+          throw new Error(
+            'CHALLENGE_LOCKED_FOR_SCORING: Cannot reorder or change step number after historical progress exists'
+          );
+        }
+        if (input.validationType !== undefined && input.validationType !== currentCp.validationType) {
+          throw new Error(
+            'CHALLENGE_LOCKED_FOR_SCORING: Cannot modify validation type after historical activity exists'
+          );
+        }
+        if (input.secretProof !== undefined) {
+          throw new Error(
+            'CHALLENGE_LOCKED_FOR_SCORING: Cannot alter secret proof on a checkpoint with recorded history'
+          );
+        }
+      }
+
+      // Check sum(checkpoints) <= challenge.points invariant
+      if (input.pointValue !== undefined && input.pointValue !== currentCp.pointValue) {
+        const [otherCps] = await tx
+          .select({
+            total: sql<number>`COALESCE(SUM(${checkpoints.pointValue}), 0)::int`,
+          })
+          .from(checkpoints)
+          .where(and(eq(checkpoints.challengeId, challengeId), ne(checkpoints.id, checkpointId)));
+
+        const newTotal = (otherCps?.total || 0) + input.pointValue;
+        if (newTotal > chal.points) {
+          throw new Error(
+            `INVALID_CHECKPOINT_POINTS: Total checkpoint points (${newTotal}) exceeds challenge point value (${chal.points})`
+          );
+        }
+      }
+
+      const updateData: any = {};
+      if (input.stepNumber !== undefined) updateData.stepNumber = input.stepNumber;
+      if (input.title !== undefined) updateData.title = input.title;
+      if (input.description !== undefined) updateData.description = input.description;
+      if (input.pointValue !== undefined) updateData.pointValue = input.pointValue;
+      if (input.validationType !== undefined) updateData.validationType = input.validationType;
+      if (input.secretProof !== undefined) updateData.secretProofHash = hashFlag(input.secretProof);
+
+      const [updated] = await tx
+        .update(checkpoints)
+        .set(updateData)
+        .where(eq(checkpoints.id, checkpointId))
+        .returning();
+
+      await auditService.record(
+        {
+          actorId: actor.id,
+          actorRole: actor.role,
+          actorIp: actor.ip,
+          action: 'CHECKPOINT_UPDATE',
+          entityType: 'checkpoint',
+          entityId: checkpointId,
+          previousState: {
+            stepNumber: currentCp.stepNumber,
+            pointValue: currentCp.pointValue,
+            title: currentCp.title,
+          },
+          newState: {
+            stepNumber: updated.stepNumber,
+            pointValue: updated.pointValue,
+            title: updated.title,
+          },
+          requestId: actor.requestId,
+        },
+        tx
+      );
+
+      return {
+        id: updated.id,
+        stepNumber: updated.stepNumber,
+        title: updated.title,
+        pointValue: updated.pointValue,
+      };
+    });
+  }
+
+  async deleteCheckpoint(
+    challengeId: string,
+    checkpointId: string,
+    actor: { id: string; role: string; ip: string; requestId?: string }
+  ): Promise<{ success: true; message: string }> {
+    return await db.transaction(async (tx) => {
+      const [chal] = await tx
+        .select()
+        .from(challenges)
+        .where(eq(challenges.id, challengeId))
+        .for('update');
+
+      if (!chal) {
+        throw new Error('CHALLENGE_NOT_FOUND');
+      }
+
+      const [currentCp] = await tx
+        .select()
+        .from(checkpoints)
+        .where(and(eq(checkpoints.id, checkpointId), eq(checkpoints.challengeId, challengeId)))
+        .for('update');
+
+      if (!currentCp) {
+        throw new Error('CHECKPOINT_NOT_FOUND');
+      }
+
+      // Check authoritative historical activity for this checkpoint / challenge
+      const [cpProg] = await tx
+        .select({ count: count() })
+        .from(checkpointProgress)
+        .where(eq(checkpointProgress.checkpointId, checkpointId));
+
+      const hasHistory = (cpProg?.count || 0) > 0 || (await checkChallengeHistoricalActivity(tx, challengeId));
+
+      if (hasHistory) {
+        throw new Error(
+          'CHALLENGE_LOCKED_FOR_SCORING: Cannot delete checkpoint after historical progress or scoring events exist. Destructive deletion would corrupt historical scoring integrity.'
+        );
+      }
+
+      await tx.delete(checkpoints).where(eq(checkpoints.id, checkpointId));
+
+      await auditService.record(
+        {
+          actorId: actor.id,
+          actorRole: actor.role,
+          actorIp: actor.ip,
+          action: 'CHECKPOINT_DELETE',
+          entityType: 'checkpoint',
+          entityId: checkpointId,
+          previousState: {
+            challengeId,
+            stepNumber: currentCp.stepNumber,
+            title: currentCp.title,
+            pointValue: currentCp.pointValue,
+          },
+          requestId: actor.requestId,
+        },
+        tx
+      );
+
+      return { success: true, message: 'Checkpoint deleted successfully' };
+    });
+  }
+
   async addHint(
     challengeId: string,
     input: CreateHintAdminInput,
@@ -352,10 +578,10 @@ export class AdminService {
   ): Promise<any> {
     return await db.transaction(async (tx) => {
       const [chal] = await tx
-        .select({ id: challenges.id })
+        .select()
         .from(challenges)
         .where(eq(challenges.id, challengeId))
-        .limit(1);
+        .for('update');
 
       if (!chal) {
         throw new Error('CHALLENGE_NOT_FOUND');
@@ -379,7 +605,7 @@ export class AdminService {
           action: 'HINT_CREATE',
           entityType: 'hint',
           entityId: newHint.id,
-          newState: { orderNumber: newHint.orderNumber, penalty: newHint.penaltyPoints },
+          newState: { orderNumber: newHint.orderNumber, penaltyPoints: newHint.penaltyPoints },
           requestId: actor.requestId,
         },
         tx
@@ -393,7 +619,11 @@ export class AdminService {
   // 2. TEAM MODERATION
   // ---------------------------------------------------------------------------
 
-  async listTeams(): Promise<any[]> {
+  async listTeams(params?: PaginationQuery): Promise<any[]> {
+    const page = Math.max(1, params?.page || 1);
+    const limit = Math.min(100, Math.max(1, params?.limit || 50));
+    const offset = (page - 1) * limit;
+
     const allTeams = await db
       .select({
         id: teams.id,
@@ -405,7 +635,9 @@ export class AdminService {
         lastScoreAt: teams.lastScoreAt,
       })
       .from(teams)
-      .orderBy(desc(teams.score), teams.lastScoreAt);
+      .orderBy(desc(teams.score), teams.lastScoreAt, teams.id)
+      .limit(limit)
+      .offset(offset);
 
     return allTeams;
   }
@@ -587,7 +819,11 @@ export class AdminService {
   // 3. USER MODERATION
   // ---------------------------------------------------------------------------
 
-  async listUsers(): Promise<any[]> {
+  async listUsers(params?: PaginationQuery): Promise<any[]> {
+    const page = Math.max(1, params?.page || 1);
+    const limit = Math.min(100, Math.max(1, params?.limit || 50));
+    const offset = (page - 1) * limit;
+
     const userList = await db
       .select({
         id: users.id,
@@ -598,8 +834,9 @@ export class AdminService {
         createdAt: users.createdAt,
       })
       .from(users)
-      .orderBy(desc(users.createdAt))
-      .limit(100);
+      .orderBy(desc(users.createdAt), users.id)
+      .limit(limit)
+      .offset(offset);
 
     return userList;
   }

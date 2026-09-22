@@ -55,6 +55,18 @@ export async function buildApp(): Promise<FastifyInstance> {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
+  // Handle CORS and Origin Rejection cleanly with 403 ORIGIN_NOT_ALLOWED
+  app.setErrorHandler((error, _request, reply) => {
+    if (error.message === 'CORS Not Allowed') {
+      return reply.status(403).send({
+        statusCode: 403,
+        error: 'ORIGIN_NOT_ALLOWED',
+        message: 'Cross-origin request not permitted',
+      });
+    }
+    reply.send(error);
+  });
+
   // 4. Secure Cookie Signing
   await app.register(cookie, {
     secret: config.COOKIE_SECRET,

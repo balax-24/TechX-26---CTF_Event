@@ -1,3 +1,4 @@
+Stage 1:
 Listed directory CTF
 Viewed SKILL.md:1-335
 Viewed SKILL.md:1-128
@@ -140,3 +141,81 @@ Following the stage-gated development model, please review the progress. Once co
 - Team creation, joining via hashed invite code, and membership cap enforcement
 - Role-Based Access Control middleware (`participant`, `admin`, `superadmin`)
 - Integration tests covering registration, login, and team workflows
+
+Stage 2:
+Ran command: `npm i @fastify/jwt @node-rs/argon2`
+Ran command: `node -e "const { hash, verify } = require('@node-rs/argon2'); hash('password123').then(h => verify(h, 'password123')).then(v => console.log('Argon2 OK:', v));"`
+Ran command: `docker ps`
+Created crypto.ts
+Created auth.ts
+Created auth.middleware.ts
+Created auth.schema.ts
+Created auth.service.ts
+Created auth.routes.ts
+Created teams.schema.ts
+Created teams.service.ts
+Created teams.routes.ts
+Viewed app.ts:1-135
+Edited app.ts
+Created crypto.test.ts
+Created auth.schema.test.ts
+Created auth_teams.test.ts
+Ran command: `npm test`
+Ran command: `npm view @fastify/jwt versions --json`
+Ran command: `npm i @fastify/jwt@^8.0.1`
+Ran command: `npm test`
+Ran command: `npm run build`
+Created auth.ts
+Ran command: `npm run build`
+Ran command: `npm test`
+Ran command: `git status`
+Ran command: `git add .; git commit -m "feat(auth-teams): Stage 2 Authentication & Teams - Argon2id, JWT, RBAC, Team Management"`
+Created walkthrough.md
+
+# Stage 2 Complete: Authentication & Teams Verified
+
+**Stage 2: Authentication & Teams** has been implemented, thoroughly tested, and committed to git.
+
+The full details and test logs are documented in:
+👉 **[`walkthrough.md`](file:///C:/Users/Balaharish%20Saravanan/.gemini/antigravity-ide/brain/2d61404a-22e2-4292-8915-2245c67cafc1/walkthrough.md)**
+
+---
+
+### Delivered Components in Stage 2
+
+1. **Cryptographic Security**:
+   - **Argon2id** password hashing and constant-time verification using `@node-rs/argon2` with OWASP-recommended parameters (19 MiB memory cost, 2 iterations).
+   - Side-channel timing-safe comparison (`timingSafeMatch`) for sensitive token and flag evaluation.
+   - High-entropy, human-friendly team invite code generator (`TECHX-XXXX-XXXX`) and SHA-256 storage hashing.
+2. **Session & Token Management**:
+   - `@fastify/jwt` integrated with dual delivery: signed HTTP-only cookies (`access_token`) and standard `Authorization: Bearer <token>` headers.
+   - Fastify TypeScript type augmentations guaranteeing typed `req.user`.
+3. **Authorization & RBAC Middleware**:
+   - `authenticate`: Validates bearer tokens or cookies, rejecting unauthenticated calls with `401`.
+   - `requireRole`: Enforces role checks (`participant`, `admin`, `superadmin`), rejecting with `403`.
+   - `requireTeam`: Guards challenge, submission, and hint endpoints, rejecting participants without a team with `400`.
+   - `requireCaptain`: Restricts team lifecycle operations (disbanding, transfers) to team captains.
+4. **Authentication Endpoints (`/api/v1/auth`)**:
+   - `POST /register`, `POST /login`, `POST /logout`, `GET /me`.
+5. **Team Management Endpoints (`/api/v1/teams`)**:
+   - `POST /` (Atomic transaction: create team + assign creator as captain).
+   - `POST /join` (Row-locked invite code verification with `TEAM_MAX_MEMBERS` cap check).
+   - `GET /me` (Roster and secret invite code for active members).
+   - `GET /:id` (Privacy-isolated public team profile).
+   - `POST /leave` (Team departure with captaincy succession / disbanding rules).
+   - `GET /` (Paginated public team directory).
+6. **Test Suite**:
+   - All **31 unit and integration tests** passing with 100% success rate across 5 test files.
+   - Clean TypeScript compile with zero type errors.
+
+---
+
+### Ready for Stage 3
+
+Please review the progress. Once you are ready, we will proceed to **Stage 3 — Challenge Engine**:
+- Challenge catalog data models and categories (`Web`, `Crypto`, `Forensics`, `Reverse`, `Pwn`, `OSINT`, `Linux`)
+- Three difficulty tiers (`beginner`, `intermediate`, `expert`)
+- Release time scheduler & visibility states (`draft`, `published`, `hidden`)
+- Static file downloads via authenticated NGINX `X-Accel-Redirect` tickets
+- Flag models (static hash, regex, and dynamic HMAC flags per team)
+- Progressive hint reveal system with penalty point deduction configurations

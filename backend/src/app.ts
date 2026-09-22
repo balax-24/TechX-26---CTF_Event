@@ -12,6 +12,8 @@ import { checkDatabaseHealth } from './db/index.js';
 import { checkRedisHealth } from './cache/redis.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { teamRoutes } from './modules/teams/teams.routes.js';
+import { challengeRoutes } from './modules/challenges/challenges.routes.js';
+import { categoryRoutes } from './modules/categories/categories.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -141,10 +143,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
   });
 
-  // Mount Authentication & Team routes
+  // Mount Feature Modules
   await app.register(authRoutes, { prefix: '/api/v1/auth' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
+  await app.register(challengeRoutes, { prefix: '/api/v1/challenges' });
+  await app.register(categoryRoutes, { prefix: '/api/v1/categories' });
 
   return app;
 }
+
 

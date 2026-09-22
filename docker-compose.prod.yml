@@ -24,6 +24,9 @@ services:
   backend:
     restart: always
 
+  challenge_gateway:
+    restart: always
+
   postgres:
     restart: always
 

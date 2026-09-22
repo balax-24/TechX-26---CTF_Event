@@ -4,8 +4,8 @@ import { challenges, challengeInstances, teams, ChallengeInstance } from '../../
 import { competitionService } from '../competition/competition.service.js';
 import { auditService } from '../admin/audit.service.js';
 import { dynamicChallengeRegistry } from './dynamic_challenges.registry.js';
-import { getDockerManager } from './docker.manager.js';
-import { InstanceSummary, DockerContainerResult } from './dynamic_challenges.types.js';
+import { getChallengeGatewayClient } from './challenge_gateway.client.js';
+import { InstanceSummary, InstanceCreationResult } from './dynamic_challenges.types.js';
 import { randomUUID, randomBytes } from 'crypto';
 import { logger } from '../../utils/logger.js';
 
@@ -209,51 +209,30 @@ export class DynamicChallengesService {
         detailsJson: { slug: challenge.slug },
       });
 
-      // 10. Container & Network Creation via Hardened Docker Manager
-      const dockerManager = getDockerManager();
-      let containerResult: DockerContainerResult;
+      // 10. Container & Network Creation via Dedicated Challenge Gateway
+      const gatewayClient = getChallengeGatewayClient();
+      let containerResult: InstanceCreationResult;
 
       try {
-        // Create isolated per-instance bridge network (internal: true prevents WAN egress, icc: true allows proxy to reach container)
-        await dockerManager.createNetwork(networkName, { internal: true, icc: true });
-
-        // If backend is containerized in production, attach it to the per-instance bridge so the reverse proxy can route
-        const backendContainer = this.getBackendContainerName();
-        if (backendContainer) {
-          await dockerManager.connectContainer(networkName, backendContainer).catch(() => {});
-        }
-
-        containerResult = await dockerManager.createAndStartContainer({
-          containerName,
+        containerResult = await gatewayClient.createAndStartInstance({
+          instanceId,
+          challengeId: challenge.id,
+          teamId,
+          slug: challenge.slug,
           image: def.image,
-          networkName,
           internalPort: def.internalPort,
           memoryLimitBytes: def.memoryLimitBytes,
           cpuLimitNano: def.cpuLimitNano,
           pidsLimit: def.pidsLimit,
           readOnlyRootfs: def.readOnlyRootfs,
           tmpfsMounts: def.tmpfsMounts,
-          env: {
-            ...(def.envAllowlist || {}),
-            CHALLENGE_INSTANCE_ID: instanceId,
-            CHALLENGE_PORT: String(def.internalPort),
-          },
-          labels: {
-            'techx.managed': 'true',
-            'techx.component': 'ctf-challenge',
-            'techx.instance_id': instanceId,
-            'techx.challenge_id': challenge.id,
-            'techx.team_id': teamId,
-          },
+          envAllowlist: def.envAllowlist,
+          healthCheckPath: def.healthCheckPath,
         });
       } catch (err: any) {
-        logger.error({ err: err.message, instanceId, teamId }, 'Docker container creation failed');
+        logger.error({ err: err.message, instanceId, teamId }, 'Challenge container creation via gateway failed');
 
-        const backendContainer = this.getBackendContainerName();
-        if (backendContainer) {
-          await dockerManager.disconnectContainer(networkName, backendContainer).catch(() => {});
-        }
-        await dockerManager.removeNetwork(networkName).catch(() => {});
+        await gatewayClient.stopAndRemoveInstance(instanceId).catch(() => {});
 
         await db
           .update(challengeInstances)
@@ -278,10 +257,10 @@ export class DynamicChallengesService {
         throw new Error('INSTANCE_START_FAILED');
       }
 
-      // 11. Bounded Health Check Verification
+      // 11. Bounded Health Check Verification via Gateway
       let healthy = false;
       for (let i = 0; i < 5; i++) {
-        healthy = await dockerManager.healthCheck(
+        healthy = await gatewayClient.healthCheck(
           containerResult.internalIp,
           containerResult.internalPort,
           def.healthCheckPath || '/'
@@ -291,8 +270,7 @@ export class DynamicChallengesService {
       }
 
       if (!healthy) {
-        await dockerManager.stopAndRemoveContainer(containerResult.containerId).catch(() => {});
-        await dockerManager.removeNetwork(networkName).catch(() => {});
+        await gatewayClient.stopAndRemoveInstance(instanceId).catch(() => {});
 
         await db
           .update(challengeInstances)
@@ -438,17 +416,11 @@ export class DynamicChallengesService {
         .where(eq(challengeInstances.id, instance.id));
 
       if (instance.containerId) {
-        await getDockerManager().stopAndRemoveContainer(instance.containerId).catch((err) => {
-          logger.warn({ err: err.message, containerId: instance.containerId }, 'Error stopping container');
-        });
+        await getChallengeGatewayClient().stopAndRemoveContainer(instance.containerId).catch(() => {});
       }
-
-      const networkName = `techx-inst-net-${instance.id.substring(0, 8)}`;
-      const backendContainer = this.getBackendContainerName();
-      if (backendContainer) {
-        await getDockerManager().disconnectContainer(networkName, backendContainer).catch(() => {});
-      }
-      await getDockerManager().removeNetwork(networkName).catch(() => {});
+      await getChallengeGatewayClient().stopAndRemoveInstance(instance.id).catch((err) => {
+        logger.warn({ err: err.message, instanceId: instance.id }, 'Error stopping container via gateway');
+      });
 
       await db
         .update(challengeInstances)
@@ -519,15 +491,9 @@ export class DynamicChallengesService {
           .where(eq(challengeInstances.id, existing.id));
 
         if (existing.containerId) {
-          await getDockerManager().stopAndRemoveContainer(existing.containerId).catch(() => {});
+          await getChallengeGatewayClient().stopAndRemoveContainer(existing.containerId).catch(() => {});
         }
-
-        const networkName = `techx-inst-net-${existing.id.substring(0, 8)}`;
-        const backendContainer = this.getBackendContainerName();
-        if (backendContainer) {
-          await getDockerManager().disconnectContainer(networkName, backendContainer).catch(() => {});
-        }
-        await getDockerManager().removeNetwork(networkName).catch(() => {});
+        await getChallengeGatewayClient().stopAndRemoveInstance(existing.id).catch(() => {});
 
         await db
           .update(challengeInstances)
@@ -561,7 +527,7 @@ export class DynamicChallengesService {
   async getProxyTarget(params: {
     slug: string;
     teamId: string;
-  }): Promise<{ internalIp: string; internalPort: number }> {
+  }): Promise<{ instanceId: string; internalIp: string; internalPort: number }> {
     const { slug, teamId } = params;
 
     // Gate: Verify live competition state
@@ -599,13 +565,14 @@ export class DynamicChallengesService {
     }
 
     return {
+      instanceId: instance.id,
       internalIp: instance.internalIp,
       internalPort: instance.internalPort,
     };
   }
 
   /**
-   * Transitions an instance to EXPIRED and cleans up associated container and network.
+   * Transitions an instance to EXPIRED and cleans up associated container and network via gateway.
    */
   public async expireInstance(instanceId: string): Promise<void> {
     const [instance] = await db
@@ -622,15 +589,11 @@ export class DynamicChallengesService {
       .where(eq(challengeInstances.id, instanceId));
 
     if (instance.containerId) {
-      await getDockerManager().stopAndRemoveContainer(instance.containerId).catch(() => {});
+      await getChallengeGatewayClient().stopAndRemoveContainer(instance.containerId).catch(() => {});
     }
-
-    const networkName = `techx-inst-net-${instance.id.substring(0, 8)}`;
-    const backendContainer = this.getBackendContainerName();
-    if (backendContainer) {
-      await getDockerManager().disconnectContainer(networkName, backendContainer).catch(() => {});
-    }
-    await getDockerManager().removeNetwork(networkName).catch(() => {});
+    await getChallengeGatewayClient().stopAndRemoveInstance(instanceId).catch((err) => {
+      logger.warn({ err: err.message, instanceId }, 'Error expiring container via gateway');
+    });
 
     await db
       .update(challengeInstances)
@@ -673,13 +636,6 @@ export class DynamicChallengesService {
       remainingTtlSeconds: remainingSeconds,
       failureReason: instance.failureReason,
     };
-  }
-
-  private getBackendContainerName(): string | undefined {
-    return (
-      process.env.BACKEND_CONTAINER_NAME ||
-      (process.env.NODE_ENV === 'production' ? 'techx_ctf_backend' : undefined)
-    );
   }
 }
 

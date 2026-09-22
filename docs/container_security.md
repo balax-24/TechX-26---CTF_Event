@@ -10,11 +10,12 @@ The table below summarizes the core boundary invariants:
 
 | Threat / Invariant Question | Architectural Answer | Mechanism of Enforcement |
 | :--- | :--- | :--- |
-| **Can a participant control the Docker daemon?** | **NO** | The Docker socket (`/var/run/docker.sock`) is never mounted into challenge containers. Route handlers never accept raw Docker commands. |
+| **Can a participant control the Docker daemon?** | **NO** | The Docker socket (`/var/run/docker.sock`) is never mounted into challenge containers or the primary Fastify backend. It is restricted exclusively to the isolated `challenge_gateway` container. Route handlers never accept raw Docker commands. |
 | **Can a participant select an arbitrary Docker image?** | **NO** | The API accepts only the challenge slug. The image is authoritatively resolved from the server registry (`dynamicChallengeRegistry`). |
 | **Can a participant mount a host directory?** | **NO** | No volume binds are permitted. Containers use `read_only: true` with bounded in-memory `tmpfs` mounts only. |
-| **Can Team A access or alter Team B's instance?** | **NO** | Containers reside on dedicated per-instance bridge networks (`internal: true, icc: true`). Inter-instance isolation is guaranteed by distinct bridge networks, where cross-bridge forwarding is dropped. Reverse proxy strictly validates session, team ID, and DB ownership. |
+| **Can Team A access or alter Team B's instance?** | **NO** | Containers reside on dedicated per-instance bridge networks (`internal: true, icc: true`). Inter-instance isolation is guaranteed by distinct bridge networks, where cross-bridge forwarding is dropped. Gateway does not route between challenge subnets. |
 | **Can a compromised container connect to PostgreSQL or Redis?** | **NO** | PostgreSQL and Redis reside exclusively on `ctf_core_net`. Dynamic challenges run on isolated per-instance networks with no IP interface or route to core data stores. |
+| **Can a compromised container connect to Core Fastify?** | **NO** | The primary Fastify backend container never attaches to `techx-inst-net-*`. Only the dedicated `challenge_gateway` has an interface on the challenge network. |
 | **Can a fork bomb exhaust host process tables?** | **NO** | Linux process limit (`PidsLimit: 64`) is configured on every container. |
 | **Can an attacker monopolize CPU or memory?** | **NO** | Hard memory limits (256MB–512MB) and CPU quotas (0.5 vCPU) are configured via Docker container host configuration. |
 
@@ -57,23 +58,36 @@ are blocked by the seccomp profile. Seccomp is never set to unconfined.
 |                               CTF PLATFORM HOST                               |
 |                                                                               |
 |   +--------------------------+          +---------------------------------+   |
-|   | ctf_core_net (Isolated)  |          | Fastify Dynamic Gateway         |   |
+|   | ctf_core_net (Isolated)  |          | Fastify Core Backend            |   |
 |   |                          |          |                                 |   |
-|   | - PostgreSQL (5432)      |          | - Inbound Proxy Gate            |   |
-|   | - Redis (6379)           |          | - Lifecycle Manager             |   |
-|   | - Fastify Core API       |          +----------------+----------------+   |
-|   +--------------------------+                           |                    |
+|   | - PostgreSQL (5432)      |          | - Application Auth & State      |   |
+|   | - Redis (6379)           |          | - NO Docker socket              |   |
+|   | - Fastify Core API       |          | - NO Challenge Net presence     |   |
+|   +--------------------------+          +----------------+----------------+   |
+|                                                          | (ctf_gateway_net)  |
+|                                                          v                    |
+|                                         +---------------------------------+   |
+|                                         | techx_challenge_gateway         |   |
+|                                         | - Holds /var/run/docker.sock    |   |
+|                                         | - NO DB / Redis / JWT secrets   |   |
+|                                         +----------------+----------------+   |
+|                                                          |                    |
 |                                         +----------------+----------------+   |
 |                                         |                                 |   |
 |                                         v                                 v   |
 |                         +-------------------------------+ +-----------------+ |
 |                         | techx-inst-net-A (internal)   | | techx-inst-net-B| |
+|                         | - Gateway interface           | | - Gateway intf  | |
 |                         | - Challenge Container Team A  | | - Container B   | |
 |                         +-------------------------------+ +-----------------+ |
 +-------------------------------------------------------------------------------+
 ```
 
-### 3.1 Network Topology Distinction: Per-Instance vs Shared Challenge Network
+### 3.1 Network Topology Distinction: Three-Tier Isolation
+- **Primary Backend Separation**:
+  The primary Fastify container never joins `techx-inst-net-*`. This prevents a compromised challenge container from reaching the core backend application, which holds the database credentials and JWT signing keys.
+- **Dedicated Challenge Gateway**:
+  A separate container (`techx_challenge_gateway`) handles Docker socket operations and acts as the reverse proxy gateway to challenge instances. It holds no application secrets.
 - **Per-Instance Network Architecture**:
   Rather than placing all team containers on a single flat bridge network, the platform provisions a dedicated Docker bridge network per challenge instance (`techx-inst-net-<instanceId[:8]>`) with `internal: true`.
 - **Inter-Instance Denial**:

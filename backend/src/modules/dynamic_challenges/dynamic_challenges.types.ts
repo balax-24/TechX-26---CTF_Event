@@ -42,6 +42,31 @@ export interface DockerContainerResult {
   internalPort: number;
 }
 
+export interface CreateInstanceDto {
+  instanceId: string;
+  challengeId: string;
+  teamId: string;
+  slug: string;
+  image: string;
+  internalPort: number;
+  memoryLimitBytes: number;
+  cpuLimitNano: number;
+  pidsLimit: number;
+  readOnlyRootfs: boolean;
+  tmpfsMounts: Record<string, string>;
+  envAllowlist?: Record<string, string>;
+  healthCheckPath?: string;
+}
+
+export interface InstanceCreationResult {
+  instanceId?: string;
+  containerId: string;
+  containerName: string;
+  networkName: string;
+  internalIp: string;
+  internalPort: number;
+}
+
 export interface ManagedContainerInfo {
   containerId: string;
   containerName: string;

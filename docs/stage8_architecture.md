@@ -21,34 +21,44 @@ Dynamic challenges host intentionally vulnerable code. Once a participant exploi
 - **Lateral Movement & Network Pivoting**: Scanning the local Docker subnet, accessing internal services (PostgreSQL on port 5432, Redis on port 6379, Fastify on port 4000), or attacking another team's challenge container.
 - **SSRF & Proxy Abuse**: Manipulating reverse proxy endpoints or returning upstream redirects to route requests to arbitrary internal IP addresses or host loopback interfaces.
 - **Secret Extraction**: Inspecting environment variables to steal CTF platform secrets (JWT signing keys, database passwords, session cookie secrets).
-
-### 2.2 Trust Hierarchy
+### 2.2 Trust Hierarchy & Component Separation
 ```text
-+-----------------------------------------------------------------------+
-| ZONE 0: High Trust Core                                               |
-| - PostgreSQL 16 (Relational State, Ledger, Invariants)                |
-| - Redis 7 (Cache, Pub/Sub, Outbox Distribution)                       |
-| - Fastify Core API (Authentication, RBAC, Scoring, Business Logic)   |
-| - Docker Socket Access (Restricted exclusively to Backend Core)       |
-+-----------------------------------------------------------------------+
++-------------------------------------------------------------------------------+
+| ZONE 0: Core Application Control Plane (High Trust - Application Level)       |
+| - Fastify Core API (Authentication, RBAC, Scoring, Participant Invariants)    |
+| - PostgreSQL 16 (Relational State, Score Ledger, Instance Records)           |
+| - Redis 7 (Cache, Session State, Pub/Sub, Outbox Queue)                       |
+| - Networks: ctf_core_net, ctf_gateway_net                                     |
+| - Docker Socket: NOT MOUNTED (Zero Docker engine access)                      |
+| - Challenge Networks: NEVER ATTACHED (Zero presence on techx-inst-net-*)      |
++-------------------------------------------------------------------------------+
                                   |
+                                  | Internal Control API over ctf_gateway_net
+                                  | (Authenticated via x-gateway-secret)
                                   v
-+-----------------------------------------------------------------------+
-| ZONE 1: Perimeter / Ingress                                           |
-| - NGINX Reverse Proxy (TLS termination, rate limiting, static assets) |
-| - Authorized Reverse Proxy Gateway (/challenges/:id/instance/proxy/*) |
-+-----------------------------------------------------------------------+
++-------------------------------------------------------------------------------+
+| ZONE 1: Challenge Gateway & Infrastructure Manager (High Trust - Infra Level) |
+| - Dedicated standalone Node.js infrastructure service                         |
+| - Holds /var/run/docker.sock to manage container lifecycle and networks       |
+| - Attaches ONLY its own container (techx_challenge_gateway) to instance nets   |
+| - Strictly isolated: NO PostgreSQL credentials, NO Redis credentials,        |
+|   NO JWT signing keys, NO Cookie secrets, NO Competition scoring logic        |
+| - Network Forwarding Disabled: Host kernel / container net.ipv4.ip_forward=0  |
++-------------------------------------------------------------------------------+
                                   |
-               [STRICT NETWORK & AUTHORIZATION BARRIER]
+               [STRICT PER-INSTANCE BRIDGE BARRIER]
                                   |
-                                  v
-+-----------------------------------------------------------------------+
-| ZONE 2: Untrusted Dynamic Challenge Containers                        |
-| - Per-team isolated ephemeral Docker containers                       |
-| - Dropped capabilities, no-new-privileges, unprivileged user          |
-| - Read-only root filesystem, finite tmpfs, finite memory/CPU/PIDs     |
-| - Isolated per-instance bridge network (internal: true, icc: false)   |
-+-----------------------------------------------------------------------+
+        +-------------------------+-------------------------+
+        |                                                   |
+        v                                                   v
++-----------------------------------+   +-----------------------------------+
+| ZONE 2A: Challenge Instance Team A|   | ZONE 2B: Challenge Instance Team B|
+| - techx-inst-net-A (internal: true|   | - techx-inst-net-B (internal: true|
+| - Dropped capabilities (ALL)      |   | - Dropped capabilities (ALL)      |
+| - No-new-privileges, Read-only    |   | - No-new-privileges, Read-only    |
+| - PID (64), Memory, CPU limits    |   | - PID (64), Memory, CPU limits    |
+| - Inaccessible to Core Fastify/DB |   | - Inaccessible to Core Fastify/DB |
++-----------------------------------+   +-----------------------------------+
 ```
 
 ---
@@ -63,7 +73,7 @@ Every container spawned for a dynamic challenge enforces the following non-negot
 | **Drop Linux Capabilities** | `CapDrop: ["ALL"]` | Removes all root capabilities (e.g. `CAP_SYS_ADMIN`, `CAP_NET_RAW`, `CAP_DAC_OVERRIDE`). Only allowlisted capabilities can be granted per challenge definition. |
 | **Privileged Mode Disabled**| `Privileged: false` | Container has zero direct device access and cannot interact with host hardware or kernel structures. |
 | **Host Namespace Isolation**| `NetworkMode != "host"`<br>`PidMode != "host"`<br>`IpcMode != "host"` | Challenges are strictly isolated into private Linux network, PID, and IPC namespaces. |
-| **Docker Socket Exclusion** | `/var/run/docker.sock` NOT mounted | Participants can never invoke Docker daemon commands. |
+| **Docker Socket Exclusion** | `/var/run/docker.sock` NOT mounted | Participants and challenge containers can never invoke Docker daemon commands. |
 | **Read-Only Filesystem**   | `ReadonlyRootfs: true` | Prevents persistence, rootkit installation, or modification of challenge binaries. |
 | **Ephemeral Writable Storage**| `Tmpfs: { "/tmp": "rw,noexec,nosuid,size=32m" }` | Controlled, bounded in-memory storage for necessary temporary files with `noexec` and `nosuid`. |
 | **Seccomp Filtering**       | Default / Hardened Seccomp profile | Blocks dangerous system calls (`clone` with new user namespaces, `bpf`, `sys_chroot`, etc.). |
@@ -76,12 +86,22 @@ Every container spawned for a dynamic challenge enforces the following non-negot
 
 ## 4. Network Topology & Isolation Model
 
-### 4.1 Topology Overview: Per-Instance Isolated Bridge Networks
-To ensure complete inter-team isolation and prevent challenge containers from communicating across instances:
-- Each active dynamic challenge instance is assigned a dedicated, short-lived Docker bridge network (`techx-inst-net-<instanceId[:8]>`).
-- Networks are created with `internal: true` to prevent external Internet egress.
-- When containerized, the Fastify backend dynamically attaches to the per-instance bridge (`docker network connect`) upon instance startup and disconnects upon teardown, allowing the reverse proxy gateway to reach `instance.internalIp:instance.internalPort`.
-- In host-mode deployments (standalone Node.js process), Fastify binds directly to the local bridge interface (`br-<id>`) in the host root network namespace.
+### 4.1 Topology Overview: Three-Tier Partitioned Architecture
+To eliminate the architectural security risk of attaching the primary application container to participant networks:
+1. **Core Backend Container (`techx_ctf_backend`)**:
+   - Attached only to `ctf_core_net` (PostgreSQL, Redis, NGINX) and `ctf_gateway_net` (internal gateway bridge).
+   - Has **NO** Docker daemon socket mounted.
+   - **NEVER** executes `docker network connect <challenge-network> <backend-container>`.
+   - Never has a network interface inside any participant bridge.
+2. **Dedicated Challenge Gateway (`techx_challenge_gateway`)**:
+   - Standalone, high-trust infrastructure container.
+   - Attached to `ctf_gateway_net` (`internal: true`) to receive control and proxy requests from Fastify.
+   - Holds `/var/run/docker.sock` to manage container lifecycles and per-instance networks.
+   - Upon container provisioning, dynamically attaches **ONLY ITS OWN CONTAINER** (`techx_challenge_gateway`) to `techx-inst-net-<instanceId[:8]>`.
+   - Stripped of all application credentials (`DATABASE_URL`, `REDIS_PASSWORD`, `JWT_SECRET`, `COOKIE_SECRET`).
+3. **Per-Instance Challenge Networks (`techx-inst-net-<instanceId[:8]>`)**:
+   - Created with `internal: true` (no WAN egress).
+   - Contains strictly two network endpoints: the `techx_challenge_gateway` interface and the single team's challenge container.
 
 ```text
                          [Participant Browser / CLI]
@@ -93,37 +113,38 @@ To ensure complete inter-team isolation and prevent challenge containers from co
                            [Fastify Backend API]
                                (Port 4000)
                               /           \
-                             /             \
-                   [ctf_core_net]       [Dynamic Challenge Gateway]
-                    /          \                 |
-                   v            v                |
-             [PostgreSQL]    [Redis]             |
-             (Port 5432)   (Port 6379)           |
-             (Isolated)    (Isolated)            |
-                                      +----------+----------+
-                                      |                     |
-                                      v                     v
+                             /             \  (ctf_gateway_net: internal)
+                   [ctf_core_net]       [Challenge Gateway Service]
+                    /          \             (Port 5000)
+                   v            v                 |
+             [PostgreSQL]    [Redis]              | (Dynamically attaches Gateway only)
+             (Port 5432)   (Port 6379)            |
+             (Isolated)    (Isolated)   +---------+---------+
+                                        |                   |
+                                        v                   v
                                [Per-Instance Net A]  [Per-Instance Net B]
                                 (internal: true)      (internal: true)
-                                      |                     |
-                                      v                     v
-                                [Container A]         [Container B]
-                                 (Team A Only)         (Team B Only)
+                                        |                   |
+                                        v                   v
+                                  [Container A]         [Container B]
+                                   (Team A Only)         (Team B Only)
 ```
 
 ### 4.2 Network Isolation Invariants & Exact Routing Mechanics
 1. **Core Service Isolation (`ctf_core_net`)**:
-   `PostgreSQL` and `Redis` containers reside exclusively on `ctf_core_net`. They have no IP or routing interface on challenge networks. Direct connectivity attempts from challenge containers to port 5432, port 6379, or internal backend services fail.
-2. **Challenge-to-Challenge Segregation**:
+   `PostgreSQL` and `Redis` containers reside exclusively on `ctf_core_net`. They have no IP or routing interface on challenge networks or the gateway network. Direct connectivity attempts from challenge containers to port 5432, port 6379, or internal backend services fail.
+2. **Core Backend Unreachability**:
+   The primary Fastify backend has no presence on `techx-inst-net-*`. A compromised challenge container cannot route to or establish TCP connections with Fastify (`techx_ctf_backend`).
+3. **Challenge-to-Challenge Segregation**:
    Because each challenge instance resides on an independent bridge network (`techx-inst-net-A` vs `techx-inst-net-B`), containers from different teams share no subnet, cannot ARP or ping each other, and cannot establish direct TCP/UDP connections. Docker's `DOCKER-ISOLATION-STAGE-2` iptables chain explicitly drops forwarded traffic between different bridge devices.
-3. **Bridge Forwarding & ICC**:
-   On a dedicated per-instance bridge containing only the backend proxy and the single challenge container, intra-bridge communication is enabled (`icc: true`) so Fastify can route requests to the challenge. If `enable_icc: false` were enforced on this 2-member bridge, Docker's `-A FORWARD -i br-xxx -o br-xxx -j DROP` rule would block the proxy from reaching the challenge. Inter-challenge isolation is guaranteed by separate bridge networks, not intra-bridge packet dropping.
-4. **Egress Policy (External WAN Inaccessibility)**:
+4. **Gateway Non-Bridging Invariant**:
+   The Gateway container does not enable IP forwarding (`net.ipv4.ip_forward = 0`). It never routes packets between `techx-inst-net-A` and `techx-inst-net-B`. It acts solely as an application-level reverse proxy.
+5. **Egress Policy (External WAN Inaccessibility)**:
    Per-instance challenge networks are provisioned with `internal: true`. Docker does not create default NAT/masquerade outbound routing rules for internal bridge networks, and no default gateway route is installed inside the container network namespace. Outbound traffic to the public Internet, internal host loopback services, or cloud metadata endpoints (`169.254.169.254`) is blocked.
-5. **Controlled Upstream Reverse Proxy**:
+6. **Controlled Upstream Reverse Proxy**:
    Participant-controlled upstream host/IP parameters are not accepted. Proxy destinations are resolved exclusively from server-controlled challenge-instance metadata (`http://${instance.internalIp}:${instance.internalPort}/`).
-6. **Proxy Redirect Safety**:
-   The reverse proxy does not follow upstream HTTP 3xx redirects. If an upstream challenge service returns a redirect pointing to `127.0.0.1`, `localhost`, `169.254.169.254`, or private subnets, the response with the `Location` header is passed directly back to the participant's browser. The platform never executes an internal request to redirect targets.
+7. **Proxy Redirect Safety**:
+   The reverse proxy does not follow upstream HTTP 3xx redirects. If an upstream challenge service returns a redirect pointing to `127.0.0.1`, `localhost`, `169.254.169.254`, or private subnets, the response with the `Location` header is passed directly back to the participant's browser. The platform never executes an internal request to redirect targets.s.
 
 ---
 

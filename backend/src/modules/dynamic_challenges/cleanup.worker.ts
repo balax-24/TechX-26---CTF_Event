@@ -1,7 +1,7 @@
 import { and, inArray, lte, eq } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { challengeInstances } from '../../db/schema.js';
-import { getDockerManager } from './docker.manager.js';
+import { getChallengeGatewayClient } from './challenge_gateway.client.js';
 import { dynamicChallengesService } from './dynamic_challenges.service.js';
 import { competitionService } from '../competition/competition.service.js';
 import { auditService } from '../admin/audit.service.js';
@@ -107,8 +107,8 @@ export class InstanceCleanupWorker {
       // -----------------------------------------------------------------------
       // 2. ORPHAN REAPER & CRASH RECONCILIATION
       // -----------------------------------------------------------------------
-      const dockerManager = getDockerManager();
-      const managedContainers = await dockerManager.listManagedContainers().catch(() => []);
+      const gatewayClient = getChallengeGatewayClient();
+      const managedContainers = await gatewayClient.listManagedContainers().catch(() => []);
 
       // Fetch all active instances in DB
       const activeDbInstances = await db
@@ -143,7 +143,7 @@ export class InstanceCleanupWorker {
               { containerId: container.containerId, name: container.containerName },
               'Reaping orphaned Docker container'
             );
-            await dockerManager.stopAndRemoveContainer(container.containerId).catch(() => {});
+            await gatewayClient.stopAndRemoveContainer(container.containerId).catch(() => {});
             orphansReaped++;
 
             await auditService.record({
@@ -163,7 +163,7 @@ export class InstanceCleanupWorker {
       // 2b. Find DB instances marked RUNNING whose Docker container died or disappeared
       for (const dbInst of activeDbInstances) {
         if (dbInst.status === 'RUNNING' && dbInst.containerId) {
-          const inspected = await dockerManager.inspectContainer(dbInst.containerId);
+          const inspected = await gatewayClient.inspectInstance(dbInst.containerId);
           if (!inspected || inspected.state === 'exited' || inspected.state === 'dead') {
             logger.warn(
               { instanceId: dbInst.id, containerId: dbInst.containerId },

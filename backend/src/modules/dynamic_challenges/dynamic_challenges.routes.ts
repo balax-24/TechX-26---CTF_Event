@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { dynamicChallengesService } from './dynamic_challenges.service.js';
+import { getChallengeGatewayClient } from './challenge_gateway.client.js';
 import { challengeInstanceParamsSchema } from './dynamic_challenges.schema.js';
 import { authenticate, requireTeam } from '../../middleware/auth.middleware.js';
 import * as http from 'http';
@@ -135,7 +136,7 @@ export const dynamicChallengeRoutes: FastifyPluginAsync = async (app: FastifyIns
   const proxyHandler = async (req: any, reply: any) => {
     const { slug } = req.params as { slug: string };
 
-    let target: { internalIp: string; internalPort: number };
+    let target: { instanceId: string; internalIp: string; internalPort: number };
     try {
       target = await dynamicChallengesService.getProxyTarget({
         slug,
@@ -168,100 +169,7 @@ export const dynamicChallengeRoutes: FastifyPluginAsync = async (app: FastifyIns
       return reply.badRequest('Invalid characters in request path');
     }
 
-    let rawQuery = '';
-    const qIndex = req.url.indexOf('?');
-    if (qIndex !== -1) {
-      rawQuery = req.url.substring(qIndex);
-      const hashIndex = rawQuery.indexOf('#');
-      if (hashIndex !== -1) {
-        rawQuery = rawQuery.substring(0, hashIndex);
-      }
-    }
-
-    const cleanSubpath = subpath.replace(/^\//, '').split('#')[0];
-    const upstreamPath = '/' + cleanSubpath + rawQuery;
-
-    // Filter hop-by-hop and client spoofing headers
-    const forwardHeaders: Record<string, any> = {};
-    const forbiddenHeaders = new Set([
-      'host',
-      'connection',
-      'keep-alive',
-      'proxy-authenticate',
-      'proxy-authorization',
-      'te',
-      'trailer',
-      'transfer-encoding',
-      'upgrade',
-      'x-target-host',
-      'x-upstream-url',
-      'x-forwarded-host',
-      'x-forwarded-server',
-    ]);
-
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (!forbiddenHeaders.has(k.toLowerCase()) && v !== undefined) {
-        forwardHeaders[k.toLowerCase()] = v;
-      }
-    }
-
-    forwardHeaders['host'] = `${target.internalIp}:${target.internalPort}`;
-    forwardHeaders['x-forwarded-for'] = req.ip;
-    forwardHeaders['x-forwarded-proto'] = 'http';
-
-    return new Promise<void>((resolve) => {
-      // Node http.request strictly communicates with target.internalIp:target.internalPort
-      // and does NOT automatically follow upstream redirects (Location: ...)
-      const proxyReq = http.request(
-        {
-          host: target.internalIp,
-          port: target.internalPort,
-          path: upstreamPath,
-          method: req.method,
-          headers: forwardHeaders,
-          timeout: 10000,
-        },
-        (proxyRes) => {
-          reply.status(proxyRes.statusCode || 200);
-          for (const [key, value] of Object.entries(proxyRes.headers)) {
-            if (key.toLowerCase() !== 'transfer-encoding' && value !== undefined) {
-              reply.header(key, value);
-            }
-          }
-          reply.send(proxyRes);
-          resolve();
-        }
-      );
-
-      proxyReq.on('error', (err) => {
-        req.log.error({ err: err.message }, 'Upstream challenge proxy error');
-        reply.status(502).send({
-          statusCode: 502,
-          error: 'BAD_GATEWAY',
-          message: 'Challenge instance is not responding or unreachable',
-        });
-        resolve();
-      });
-
-      proxyReq.on('timeout', () => {
-        proxyReq.destroy();
-        reply.status(504).send({
-          statusCode: 504,
-          error: 'GATEWAY_TIMEOUT',
-          message: 'Challenge instance request timed out',
-        });
-        resolve();
-      });
-
-      if (req.body && (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH')) {
-        if (typeof req.body === 'string' || Buffer.isBuffer(req.body)) {
-          proxyReq.write(req.body);
-        } else {
-          proxyReq.write(JSON.stringify(req.body));
-        }
-      }
-      proxyReq.end();
-    });
+    return await getChallengeGatewayClient().proxy(req, reply, target);
   };
 
   app.all('/:slug/instance/proxy', { preHandler: [authenticate, requireTeam] }, proxyHandler);

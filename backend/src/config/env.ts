@@ -19,6 +19,9 @@ const envSchema = z.object({
 
   CORS_ORIGIN: z.string().default('http://localhost:5173,http://localhost:4000,http://localhost,http://127.0.0.1'),
 
+  CHALLENGE_GATEWAY_URL: z.string().default('http://127.0.0.1:5000'),
+  CHALLENGE_GATEWAY_SECRET: z.string().min(16).default('techx_gateway_secure_internal_token_2026'),
+
   JWT_SECRET: z.string().min(16).default('super_secret_jwt_key_techx_ctf_change_me_in_production_32chars!'),
   JWT_EXPIRES_IN: z.string().default('24h'),
   COOKIE_SECRET: z.string().min(16).default('super_secret_cookie_signing_key_techx_ctf_32chars_minimum!'),

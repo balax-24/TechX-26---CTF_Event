@@ -281,8 +281,8 @@ export class MockDockerManager implements IDockerManager {
     }
 
     // 4. Backend internal service isolation check
-    if (targetHost === 'backend' || (targetHost === '172.20.0.10' && targetPort === 4000)) {
-      return { allowed: false, reason: 'EHOSTUNREACH: Internal backend management port is unreachable from challenge networks' };
+    if (targetHost === 'backend' || targetHost === 'techx_ctf_backend' || (targetHost === '172.20.0.10' && targetPort === 4000)) {
+      return { allowed: false, reason: 'EHOSTUNREACH: Internal backend management port is unreachable from challenge networks (Core backend is strictly isolated on ctf_core_net)' };
     }
 
     // 5. External WAN / Internet egress check

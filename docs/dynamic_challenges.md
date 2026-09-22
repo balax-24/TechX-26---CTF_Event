@@ -89,11 +89,17 @@ Performs an atomic reset: stops and purges the old container, clears any ephemer
 ### 2.5 Inbound Reverse Proxy Gateway
 **`ALL /api/v1/challenges/:slug/instance/proxy/*`**
 
-Routes participant HTTP requests directly to their isolated challenge container.
+Routes participant HTTP requests to their isolated challenge container via the dedicated Challenge Gateway:
+
+```text
+Participant -> NGINX -> Core Fastify (Authorization Gate) -> Challenge Gateway -> Challenge Container
+```
 
 - **Security Properties**:
-  - Validates authentication and active team membership on every single HTTP request.
-  - Upstream IP and port are resolved **strictly** from the database record for the requesting team's active instance.
+  - Validates authentication and active team membership on every single HTTP request in the Core Fastify backend.
+  - Core Fastify never attaches to the challenge network (`techx-inst-net-*`).
+  - Upstream IP and port are resolved **strictly** from the database record for the requesting team's active instance and dispatched to the `challenge_gateway` service over `ctf_gateway_net` (`internal: true`).
+  - The Gateway validates the internal `x-gateway-secret` token on all requests.
   - Participant-controlled upstream host/IP parameters are not accepted. Proxy destinations are resolved exclusively from server-controlled challenge-instance metadata.
   - Target IP addresses are validated as dotted-decimal IPv4 and ports as integers (1–65535).
   - Hop-by-hop headers and client spoofing headers (`x-target-host`, `x-upstream-url`, `host`, `x-forwarded-host`) are stripped.

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, Team } from '../types/api';
 import { authApi } from '../api/auth';
+import { clearCachedCsrfToken, setOnUnauthorized } from '../api/client';
 import { useToast } from './ToastContext';
 
 interface AuthContextType {
@@ -47,6 +48,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let isMounted = true;
 
+    // Attach global 401 interceptor
+    setOnUnauthorized(() => {
+      if (isMounted) {
+        setUser(null);
+        setTeamState(null);
+        clearCachedCsrfToken();
+      }
+    });
+
     async function initSession() {
       setIsLoading(true);
       try {
@@ -70,10 +80,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => {
       isMounted = false;
+      setOnUnauthorized(null);
     };
   }, []);
 
   const login = async (data: { emailOrUsername: string; password: string }) => {
+    clearCachedCsrfToken(); // Invalidate any previous session token
     const res = await authApi.login(data);
     setUser(res.user);
     setTeamState(res.team);
@@ -81,6 +93,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const register = async (data: { username: string; email: string; password: string }) => {
+    clearCachedCsrfToken(); // Invalidate any previous session token
     const res = await authApi.register(data);
     setUser(res.user);
     setTeamState(res.team);
@@ -91,10 +104,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await authApi.logout();
     } catch {
-      // Ignore logout errors
+      // Ignore logout network errors
     } finally {
       setUser(null);
       setTeamState(null);
+      clearCachedCsrfToken();
       showToast('You have been logged out.', 'info');
     }
   };

@@ -81,7 +81,7 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
               borderBottom: '1px solid var(--color-border, #262B3F)',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <Badge variant="neutral">{challenge.category}</Badge>
               <Badge variant={difficultyVariant[challenge.difficulty] || 'neutral'}>
                 {challenge.difficulty}
@@ -117,6 +117,7 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
               lineHeight: 1.6,
               color: 'var(--color-text, #F8FAFC)',
               whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
             }}
           >
             {challenge.description}
@@ -149,6 +150,8 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
                 style={{
                   fontSize: 'var(--text-sm, 0.875rem)',
                   color: 'var(--color-brand-bright, #BA68C8)',
+                  wordBreak: 'break-all',
+                  display: 'block',
                 }}
               >
                 {challenge.connectionInfo}
@@ -181,7 +184,8 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '8px',
-                      padding: '6px 12px',
+                      padding: '8px 14px',
+                      minHeight: '40px',
                       backgroundColor: 'var(--color-surface-hover, #1E2336)',
                       border: '1px solid var(--color-border-light, #363D59)',
                       borderRadius: 'var(--radius-md, 8px)',
@@ -190,7 +194,7 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
                       textDecoration: 'none',
                     }}
                   >
-                    <span>📥</span>
+                    <span aria-hidden="true">📥</span>
                     <span>{file.filename}</span>
                   </a>
                 ))}

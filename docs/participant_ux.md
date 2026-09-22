@@ -58,3 +58,23 @@ Designed to support 200–400 concurrent participants across College LAN, local 
   When SSE connections drop due to Wi-Fi interruptions or laptop sleep, reconnection attempts follow a bounded backoff curve (1s, 2s, 4s, 8s, 16s, max 30s) + random jitter.
 - **Offline / Degraded Mode**:
   If the backend becomes temporarily unreachable, the frontend preserves the latest known state, displays an unobtrusive warning banner, and resumes synchronization upon reconnection.
+
+---
+
+## 6. Stage 7 Hardening Enhancements
+- **Precise CSRF Retry Matrix**:
+  - 403 responses trigger CSRF refresh and a single retry **only** when the error explicitly identifies a CSRF failure (`CSRF_REQUIRED`, `CSRF_INVALID`).
+  - Business-level 403 responses (`TEAM_DISQUALIFIED`, `COMPETITION_PAUSED`, `COMPETITION_ENDED`, `FORBIDDEN`, `ADMIN_PARTICIPATION_FORBIDDEN`) **never** trigger CSRF retry.
+- **Zero Mutation Retries on Failure/Timeout**:
+  - Mutations (`POST`, `PUT`, `PATCH`, `DELETE`) are never blindly retried on timeouts or 5xx errors.
+  - Timeouts communicate uncertainty with safe recovery guidance: `"The request timed out. Please check your connection and verify your challenge status before trying again."`
+- **Native EventSource Lifecycle**:
+  - Preserves browser native reconnection (`readyState === EventSource.CONNECTING`) ensuring automatic transmission of `Last-Event-ID` request headers.
+  - Reinstantiates connections with bounded backoff only on fatal closures (`readyState === EventSource.CLOSED`).
+  - Fully tears down connections and cancels pending reconnect timers on logout.
+- **Accessibility & Mobile Touch Targets**:
+  - All interactive controls (buttons, inputs, modal dismissals) enforce $\ge 44\text{px}$ touch targets.
+  - Form validation errors dynamically link to inputs via `aria-describedby` and set `aria-invalid`.
+  - Code blocks and connection strings enforce `word-break: break-all` to prevent viewport overflow on 360px devices.
+- **Session Cleanup**:
+  - Global 401 interception scrubs user profile, team data, cached CSRF tokens, and terminates SSE streams immediately.

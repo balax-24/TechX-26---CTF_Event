@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -19,8 +19,14 @@ const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const activeTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const removeToast = useCallback((id: string) => {
+    const timer = activeTimersRef.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      activeTimersRef.current.delete(id);
+    }
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
@@ -31,13 +37,22 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setToasts((prev) => [...prev, newToast]);
 
       if (duration > 0) {
-        setTimeout(() => {
+        const timer = setTimeout(() => {
           removeToast(id);
+          activeTimersRef.current.delete(id);
         }, duration);
+        activeTimersRef.current.set(id, timer);
       }
     },
     [removeToast]
   );
+
+  useEffect(() => {
+    return () => {
+      activeTimersRef.current.forEach((timer) => clearTimeout(timer));
+      activeTimersRef.current.clear();
+    };
+  }, []);
 
   return (
     <ToastContext.Provider value={{ toasts, showToast, removeToast }}>
@@ -94,11 +109,16 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   border: 'none',
                   color: 'var(--color-text-muted, #64748B)',
                   cursor: 'pointer',
+                  minWidth: '32px',
+                  minHeight: '32px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   padding: '4px',
                   fontSize: '1rem',
                   lineHeight: 1,
                 }}
-                aria-label="Close notification"
+                aria-label="Dismiss toast"
               >
                 &times;
               </button>

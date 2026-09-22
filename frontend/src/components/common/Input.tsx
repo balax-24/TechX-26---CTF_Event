@@ -15,6 +15,11 @@ export const Input: React.FC<InputProps> = ({
   ...props
 }) => {
   const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
+  const describedById = error
+    ? inputId ? `${inputId}-error` : undefined
+    : helperText
+    ? inputId ? `${inputId}-helper` : undefined
+    : undefined;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%' }}>
@@ -32,6 +37,8 @@ export const Input: React.FC<InputProps> = ({
       )}
       <input
         id={inputId}
+        aria-invalid={!!error}
+        aria-describedby={describedById || props['aria-describedby']}
         style={{
           borderColor: error ? 'var(--color-danger, #EF4444)' : undefined,
           ...style,
@@ -40,7 +47,9 @@ export const Input: React.FC<InputProps> = ({
       />
       {error ? (
         <span
+          id={inputId ? `${inputId}-error` : undefined}
           role="alert"
+          aria-live="polite"
           style={{
             fontSize: 'var(--text-xs, 0.75rem)',
             color: 'var(--color-danger, #EF4444)',
@@ -51,6 +60,7 @@ export const Input: React.FC<InputProps> = ({
         </span>
       ) : helperText ? (
         <span
+          id={inputId ? `${inputId}-helper` : undefined}
           style={{
             fontSize: 'var(--text-xs, 0.75rem)',
             color: 'var(--color-text-muted, #64748B)',

@@ -48,19 +48,25 @@ export const Button: React.FC<ButtonProps> = ({
 
   const sizeStyles: Record<'sm' | 'md' | 'lg', React.CSSProperties> = {
     sm: {
-      padding: '6px 12px',
+      padding: '8px 14px',
       fontSize: 'var(--text-xs, 0.75rem)',
       borderRadius: 'var(--radius-sm, 6px)',
+      minHeight: '38px',
+      minWidth: '44px',
     },
     md: {
-      padding: '8px 16px',
+      padding: '10px 18px',
       fontSize: 'var(--text-sm, 0.875rem)',
       borderRadius: 'var(--radius-md, 8px)',
+      minHeight: '44px',
+      minWidth: '44px',
     },
     lg: {
-      padding: '12px 24px',
+      padding: '14px 26px',
       fontSize: 'var(--text-base, 1rem)',
       borderRadius: 'var(--radius-lg, 12px)',
+      minHeight: '48px',
+      minWidth: '48px',
     },
   };
 
@@ -68,10 +74,16 @@ export const Button: React.FC<ButtonProps> = ({
     <button
       disabled={disabled || isLoading}
       style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontWeight: 600,
+        lineHeight: 1.2,
+        cursor: disabled || isLoading ? 'not-allowed' : 'pointer',
+        opacity: disabled || isLoading ? 0.6 : 1,
+        transition: 'all var(--transition-fast, 150ms ease)',
         ...variantStyles[variant],
         ...sizeStyles[size],
-        opacity: disabled || isLoading ? 0.6 : 1,
-        cursor: disabled || isLoading ? 'not-allowed' : 'pointer',
         ...style,
       }}
       {...props}
@@ -86,6 +98,7 @@ export const Button: React.FC<ButtonProps> = ({
             borderTopColor: '#FFFFFF',
             borderRadius: '50%',
             animation: 'spin 0.8s linear infinite',
+            marginRight: children ? '8px' : '0',
           }}
         />
       )}

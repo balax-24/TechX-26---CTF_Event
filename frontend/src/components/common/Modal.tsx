@@ -56,7 +56,7 @@ export const Modal: React.FC<ModalProps> = ({
           boxShadow: 'var(--shadow-lg, 0 10px 25px rgba(0,0,0,0.6))',
           width: '100%',
           maxWidth,
-          maxHeight: '90vh',
+          maxHeight: 'min(90vh, calc(100dvh - 32px))',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -70,9 +70,10 @@ export const Modal: React.FC<ModalProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            flexShrink: 0,
           }}
         >
-          <h2 id="modal-title" style={{ fontSize: 'var(--text-lg, 1.125rem)' }}>
+          <h2 id="modal-title" style={{ fontSize: 'var(--text-lg, 1.125rem)', margin: 0 }}>
             {title}
           </h2>
           <button
@@ -84,7 +85,12 @@ export const Modal: React.FC<ModalProps> = ({
               color: 'var(--color-text-muted, #64748B)',
               fontSize: '1.25rem',
               cursor: 'pointer',
-              padding: '4px',
+              minWidth: '44px',
+              minHeight: '44px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 'var(--radius-sm, 4px)',
               lineHeight: 1,
             }}
             aria-label="Close modal"
@@ -96,6 +102,7 @@ export const Modal: React.FC<ModalProps> = ({
           style={{
             padding: '20px',
             overflowY: 'auto',
+            flex: 1,
           }}
         >
           {children}

@@ -53,7 +53,15 @@ export const CheckpointProgress: React.FC<CheckpointProgressProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <h4 style={{ fontSize: 'var(--text-sm, 0.875rem)', color: 'var(--color-text-secondary, #94A3B8)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+      <h4
+        style={{
+          fontSize: 'var(--text-sm, 0.875rem)',
+          color: 'var(--color-text-secondary, #94A3B8)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+          margin: 0,
+        }}
+      >
         Checkpoint Progression
       </h4>
 
@@ -88,10 +96,12 @@ export const CheckpointProgress: React.FC<CheckpointProgressProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '8px',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '1rem' }}>
+                <span aria-hidden="true" style={{ fontSize: '1rem' }}>
                   {cp.isSolved ? '✓' : isLocked ? '🔒' : '📍'}
                 </span>
                 <span
@@ -121,28 +131,31 @@ export const CheckpointProgress: React.FC<CheckpointProgressProps> = ({
             </div>
 
             {cp.description && (
-              <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted, #64748B)' }}>
+              <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted, #64748B)', margin: 0 }}>
                 {cp.description}
               </p>
             )}
 
             {!cp.isSolved && !isLocked && (
-              <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
                 <Input
+                  id={`checkpoint-proof-${cp.id}`}
+                  aria-label={`Proof for step ${cp.stepNumber}: ${cp.title}`}
                   placeholder="Enter checkpoint proof / token..."
                   value={proofInputs[cp.id] || ''}
                   onChange={(e) =>
                     setProofInputs((prev) => ({ ...prev, [cp.id]: e.target.value }))
                   }
                   disabled={isDisabled || submittingId === cp.id}
-                  style={{ fontSize: '0.8rem', padding: '6px 10px' }}
+                  style={{ flex: '1 1 200px', fontSize: '0.8rem', padding: '6px 10px' }}
                 />
                 <Button
                   size="sm"
                   variant="primary"
                   isLoading={submittingId === cp.id}
-                  disabled={isDisabled}
+                  disabled={isDisabled || !proofInputs[cp.id]?.trim()}
                   onClick={() => handleValidate(cp)}
+                  style={{ minWidth: '90px' }}
                 >
                   Validate
                 </Button>

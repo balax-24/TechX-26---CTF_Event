@@ -127,6 +127,7 @@ export const LeaderboardProvider: React.FC<{ children: React.ReactNode }> = ({ c
   // Connect to SSE stream
   const connectSSE = useCallback(() => {
     if (typeof window === 'undefined') return;
+    if (!isAuthenticated) return;
 
     // Clean up any existing connection
     if (eventSourceRef.current) {
@@ -156,6 +157,8 @@ export const LeaderboardProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setLeaderboardVersion(snapshot.leaderboardVersion);
         setLastUpdatedAt(snapshot.updatedAt || new Date().toISOString());
         currentVersionRef.current = snapshot.leaderboardVersion;
+        setIsConnected(true);
+        setIsReconnecting(false);
         setIsLoading(false);
       } catch {
         // Discard malformed snapshot
@@ -174,11 +177,23 @@ export const LeaderboardProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     es.onerror = () => {
       setIsConnected(false);
-      es.close();
-      eventSourceRef.current = null;
 
-      // Exponential backoff with jitter: 1s, 2s, 4s, 8s, 16s, max 30s
+      // In native browser EventSource, when connection drops, readyState is CONNECTING (0).
+      // The browser natively reconnects and automatically transmits the Last-Event-ID header.
+      // Do NOT call es.close() here as it would destroy the browser's native reconnection state.
+      if (es.readyState === EventSource.CONNECTING) {
+        setIsReconnecting(true);
+        return;
+      }
+
+      // If readyState is CLOSED (2), native reconnection has terminated permanently.
+      // Re-instantiate connection using bounded exponential backoff with jitter.
       setIsReconnecting(true);
+      es.close();
+      if (eventSourceRef.current === es) {
+        eventSourceRef.current = null;
+      }
+
       const attempt = reconnectAttemptsRef.current;
       const baseDelay = Math.min(1000 * Math.pow(2, attempt), 30000);
       const jitter = Math.random() * 500;
@@ -193,7 +208,7 @@ export const LeaderboardProvider: React.FC<{ children: React.ReactNode }> = ({ c
         connectSSE();
       }, delay);
     };
-  }, [handleScoreUpdate]);
+  }, [isAuthenticated, handleScoreUpdate]);
 
   // Initial mount: load snapshot always; if authenticated, start the single SSE stream
   useEffect(() => {
@@ -206,7 +221,13 @@ export const LeaderboardProvider: React.FC<{ children: React.ReactNode }> = ({ c
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      reconnectAttemptsRef.current = 0;
       setIsConnected(false);
+      setIsReconnecting(false);
     }
 
     return () => {
@@ -218,6 +239,7 @@ export const LeaderboardProvider: React.FC<{ children: React.ReactNode }> = ({ c
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      reconnectAttemptsRef.current = 0;
     };
   }, [isAuthenticated, connectSSE, refreshSnapshot]);
 

@@ -62,9 +62,15 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         });
       }
     } catch (err: any) {
+      // Stage 7 Hardening: Never retry automatically on timeout or error; communicate uncertainty
+      const message =
+        err.code === 'REQUEST_TIMEOUT'
+          ? 'The request timed out. Please check your connection and verify your challenge status before trying again.'
+          : err.message || 'Failed to process flag submission.';
+
       setFeedback({
         type: 'error',
-        message: err.message || 'Failed to process flag submission.',
+        message,
       });
     } finally {
       setIsSubmitting(false);
@@ -106,7 +112,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         Submit Flag
       </label>
 
-      <div style={{ display: 'flex', gap: '8px' }}>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
         <Input
           id="flag-input"
           placeholder="flag{...} or techx{...}"
@@ -114,7 +120,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           onChange={(e) => setFlag(e.target.value)}
           disabled={isDisabled}
           className="font-mono"
-          style={{ flex: 1 }}
+          aria-invalid={feedback?.type === 'error'}
+          aria-describedby={feedback ? 'flag-submission-feedback' : undefined}
+          style={{ flex: '1 1 220px' }}
           required
         />
         <Button
@@ -122,7 +130,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           variant="primary"
           isLoading={isSubmitting}
           disabled={isDisabled || !flag.trim()}
-          style={{ minWidth: '100px' }}
+          style={{ minWidth: '110px' }}
         >
           Submit
         </Button>
@@ -130,7 +138,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
       {feedback && (
         <div
+          id="flag-submission-feedback"
           role="alert"
+          aria-live="polite"
           style={{
             padding: '10px 14px',
             borderRadius: 'var(--radius-md, 8px)',

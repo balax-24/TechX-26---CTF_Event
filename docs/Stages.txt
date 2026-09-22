@@ -516,5 +516,32 @@ Implemented production participant-facing web application for TechX Madras 2026:
    - **Build**: Backend and Frontend TypeScript compilation pass with 0 errors. Zero secrets in frontend bundle.
 
 
-
-
+================================================================================
+STAGE 7 HARDENING: PARTICIPANT FRONTEND SECURITY, REALTIME & RELIABILITY — COMPLETED
+================================================================================
+Completed targeted security, realtime, and reliability hardening pass over Stage 7:
+1. **Precise CSRF Retry Matrix**:
+   - The API client inspects 403 responses and restricts CSRF token refresh & retry strictly to explicit CSRF failures (`CSRF_REQUIRED`, `CSRF_INVALID`).
+   - Business-level 403 responses (`TEAM_DISQUALIFIED`, `COMPETITION_PAUSED`, `COMPETITION_ENDED`, `FORBIDDEN`, `ADMIN_PARTICIPATION_FORBIDDEN`) are never retried.
+2. **Zero Mutation Retries on Failure/Timeout**:
+   - State-changing operations (flag submission, hint unlock, checkpoint proof) are never automatically retried upon network timeouts, connection resets, or 5xx server errors.
+   - Timeouts return a safe uncertainty recovery advisory without resubmitting data.
+3. **Native EventSource Lifecycle & Reconnection**:
+   - Preserves browser native reconnection (`readyState === EventSource.CONNECTING`) to maintain standard `Last-Event-ID` request headers.
+   - Bounded exponential backoff with jitter is applied only on fatal socket closure (`readyState === EventSource.CLOSED`).
+   - Clean teardown of active connections and pending timers upon logout and unmount.
+4. **Accessible Touch Targets & ARIA Associations**:
+   - All interactive controls (buttons, inputs, modal dismissals) enforce minimum 44px touch targets.
+   - Form inputs automatically associate validation errors via `aria-describedby` and set `aria-invalid`.
+   - Modals support Escape key dismissal, backdrop dismiss, and contained scrolling.
+5. **Mobile Viewport Overflow Defense**:
+   - Code blocks and connection strings enforce `word-break: break-all` to eliminate horizontal scrollbars on 360px mobile viewports.
+6. **Session & Memory Leak Cleanup**:
+   - 401 unauthenticated responses trigger clean session teardown via global callback.
+   - In-memory CSRF tokens are cleared on logout, login, and registration.
+   - Toast timers and SSE reconnect timers are cleanly tracked and purged on unmount.
+7. **Verification & Testing**:
+   - **Backend**: 34 test files, 253 tests passing (100% success rate, 0 regressions).
+   - **Frontend**: 10 test files, 43 tests passing (100% success rate).
+   - **Total**: 44 test files, 296 tests passing.
+   - **Build**: Both backend and frontend production builds pass with 0 errors. Zero secrets in frontend bundle.

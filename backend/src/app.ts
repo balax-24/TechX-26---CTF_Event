@@ -1,0 +1,134 @@
+import Fastify, { FastifyInstance } from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import cookie from '@fastify/cookie';
+import sensible from '@fastify/sensible';
+import { randomUUID } from 'crypto';
+
+import { config } from './config/env.js';
+import { logger } from './utils/logger.js';
+import { checkDatabaseHealth } from './db/index.js';
+import { checkRedisHealth } from './cache/redis.js';
+
+export async function buildApp(): Promise<FastifyInstance> {
+  const app = Fastify({
+    logger: false, // We use our structured pino logger explicitly
+    genReqId: () => randomUUID(),
+    trustProxy: true,
+    disableRequestLogging: config.NODE_ENV === 'test',
+  });
+
+  // 1. Sensible HTTP Errors
+  await app.register(sensible);
+
+  // 2. Helmet Security Headers
+  await app.register(helmet, {
+    contentSecurityPolicy: config.NODE_ENV === 'production',
+    crossOriginEmbedderPolicy: false,
+  });
+
+  // 3. CORS Configuration
+  const allowedOrigins = config.CORS_ORIGIN.split(',').map((origin) => origin.trim());
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+        return cb(null, true);
+      }
+      return cb(new Error('CORS Not Allowed'), false);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
+
+  // 4. Secure Cookie Signing
+  await app.register(cookie, {
+    secret: config.COOKIE_SECRET,
+    hook: 'onRequest',
+  });
+
+  // 5. Request Lifecycle Logging
+  app.addHook('onRequest', async (req) => {
+    if (req.url !== '/health' && config.NODE_ENV !== 'test') {
+      logger.info(
+        {
+          reqId: req.id,
+          method: req.method,
+          url: req.url,
+          ip: req.ip,
+        },
+        'Incoming request'
+      );
+    }
+  });
+
+  app.addHook('onResponse', async (req, reply) => {
+    if (req.url !== '/health' && config.NODE_ENV !== 'test') {
+      logger.info(
+        {
+          reqId: req.id,
+          method: req.method,
+          url: req.url,
+          statusCode: reply.statusCode,
+          responseTimeMs: Math.round(reply.elapsedTime),
+        },
+        'Request completed'
+      );
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 6. HEALTH PROBES
+  // ---------------------------------------------------------------------------
+
+  // Liveness probe (Fast check for Docker container liveness)
+  app.get('/health', async (_req, reply) => {
+    return reply.status(200).send({
+      status: 'ok',
+      uptimeSeconds: process.uptime(),
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Readiness probe (Deep check verifying DB & Redis connectivity)
+  app.get('/api/v1/health', async (_req, reply) => {
+    const [dbHealth, redisHealth] = await Promise.all([
+      checkDatabaseHealth(),
+      checkRedisHealth(),
+    ]);
+
+    const isHealthy = dbHealth.status === 'healthy' && redisHealth.status === 'healthy';
+    const isDegraded = dbHealth.status === 'healthy' || redisHealth.status === 'healthy';
+
+    const responseStatus = isHealthy ? 'ok' : isDegraded ? 'degraded' : 'down';
+    const httpStatusCode = isHealthy ? 200 : isDegraded ? 200 : 503;
+
+    return reply.status(httpStatusCode).send({
+      status: responseStatus,
+      deploymentMode: config.DEPLOYMENT_MODE,
+      competitionState: config.COMPETITION_STATE,
+      uptimeSeconds: process.uptime(),
+      timestamp: new Date().toISOString(),
+      services: {
+        database: dbHealth,
+        redis: redisHealth,
+      },
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7. BASE API ROUTE
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1', async (_req, reply) => {
+    return reply.send({
+      name: 'TechX CTF Core API',
+      version: '1.0.0',
+      event: 'TechX Madras 2026',
+      status: 'operational',
+      docs: '/api/v1/docs',
+    });
+  });
+
+  return app;
+}

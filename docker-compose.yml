@@ -1,0 +1,149 @@
+# ==============================================================================
+# TECHX CTF 2026 — BASE DOCKER COMPOSE CONFIGURATION
+# ==============================================================================
+# Usage:
+#   College LAN Mode:
+#     docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
+#   Production Mode:
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. DATABASE: PostgreSQL 16 Relational State of Record
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: techx_ctf_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-techx_ctf_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-techx_ctf_secure_password_2026}
+      POSTGRES_DB: ${DB_NAME:-techx_ctf_db}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-techx_ctf_user} -d ${DB_NAME:-techx_ctf_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ctf_core_net
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+
+  # ----------------------------------------------------------------------------
+  # 2. CACHE & PUB/SUB: Redis 7 In-Memory Engine
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: techx_ctf_redis
+    restart: unless-stopped
+    command: >
+      redis-server 
+      --requirepass ${REDIS_PASSWORD:-techx_redis_secure_password_2026}
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy volatile-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-techx_redis_secure_password_2026}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - ctf_core_net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  # ----------------------------------------------------------------------------
+  # 3. BACKEND: Fastify TypeScript Core Service
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    container_name: techx_ctf_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - challenge_files:/data/challenges/static
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:4000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - ctf_core_net
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+
+  # ----------------------------------------------------------------------------
+  # 4. INGRESS: NGINX Alpine Reverse Proxy
+  # ----------------------------------------------------------------------------
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    container_name: techx_ctf_nginx
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - challenge_files:/data/challenges/static:ro
+    networks:
+      - ctf_core_net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+
+# ------------------------------------------------------------------------------
+# NETWORKS
+# ------------------------------------------------------------------------------
+networks:
+  ctf_core_net:
+    name: techx_ctf_core_net
+    driver: bridge
+  ctf_challenges_net:
+    name: techx_ctf_challenges_net
+    driver: bridge
+
+# ------------------------------------------------------------------------------
+# PERSISTENT VOLUMES
+# ------------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    name: techx_ctf_postgres_data
+  redis_data:
+    name: techx_ctf_redis_data
+  challenge_files:
+    name: techx_ctf_challenge_files

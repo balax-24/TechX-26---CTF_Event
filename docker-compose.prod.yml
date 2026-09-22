@@ -1,0 +1,31 @@
+# ==============================================================================
+# TECHX CTF 2026 — PRODUCTION SERVER OVERLAY
+# ==============================================================================
+# In Production mode:
+# - NGINX binds to 80 (HTTP redirect) and 443 (HTTPS)
+# - TLS termination with SSL certificates
+# - Strict security headers, HSTS, and rate buffering
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+    environment:
+      - DEPLOYMENT_MODE=production
+    restart: always
+
+  backend:
+    restart: always
+
+  postgres:
+    restart: always
+
+  redis:
+    restart: always

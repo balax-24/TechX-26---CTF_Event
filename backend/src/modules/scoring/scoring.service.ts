@@ -46,7 +46,18 @@ export class ScoringService {
   }): Promise<FinalSolveResult> {
     const { teamId, userId, challengeId, submittedFlag, ipAddress, userAgent } = params;
 
-    return await db.transaction(async (tx) => {
+    let eventToEmit: {
+      teamId: string;
+      teamName: string;
+      challengeId: string;
+      challengeTitle: string;
+      eventType: 'final_solve';
+      pointsAwarded: number;
+      newTeamScore: number;
+      timestamp: Date;
+    } | null = null;
+
+    const result = await db.transaction(async (tx) => {
       // 1. Check if team already solved (row-locked if exists)
       const [existingSolve] = await tx
         .select()
@@ -73,7 +84,7 @@ export class ScoringService {
         });
 
         return {
-          status: 'already_solved',
+          status: 'already_solved' as const,
           pointsAwarded: 0,
           challengeSolved: true,
         };
@@ -184,31 +195,37 @@ export class ScoringService {
         'Final challenge solve committed'
       );
 
-      // 9. Post-commit event emission
-      setImmediate(() => {
-        scoringEventBus.emitScoreEvent({
-          teamId,
-          teamName: team.name,
-          challengeId,
-          challengeTitle: chal.title,
-          eventType: 'final_solve',
-          pointsAwarded: pointsToAward,
-          newTeamScore,
-          timestamp: new Date(),
-        });
-      });
+      // Prepare event to emit strictly post-commit
+      eventToEmit = {
+        teamId,
+        teamName: team.name,
+        challengeId,
+        challengeTitle: chal.title,
+        eventType: 'final_solve',
+        pointsAwarded: pointsToAward,
+        newTeamScore,
+        timestamp: new Date(),
+      };
 
       return {
-        status: 'correct',
+        status: 'correct' as const,
         pointsAwarded: pointsToAward,
         challengeSolved: true,
         newTeamScore,
       };
     });
+
+    // 9. Post-commit event emission (guaranteed to run ONLY after tx commits)
+    if (eventToEmit) {
+      scoringEventBus.emitScoreEvent(eventToEmit);
+    }
+
+    return result;
   }
 
   /**
    * Awards checkpoint completion with prerequisite checking and anti-tamper verification.
+   * Defensively enforces that total checkpoint points awarded cannot exceed challenge.points.
    */
   async awardCheckpoint(params: {
     teamId: string;
@@ -218,8 +235,20 @@ export class ScoringService {
   }): Promise<CheckpointAwardResult> {
     const { teamId, userId, checkpointId, proofMetadata } = params;
 
-    return await db.transaction(async (tx) => {
-      // 1. Fetch checkpoint details
+    let eventToEmit: {
+      teamId: string;
+      teamName: string;
+      challengeId: string;
+      checkpointId: string;
+      checkpointNumber: number;
+      eventType: 'checkpoint_solve';
+      pointsAwarded: number;
+      newTeamScore: number;
+      timestamp: Date;
+    } | null = null;
+
+    const result = await db.transaction(async (tx) => {
+      // 1. Fetch checkpoint details and parent challenge
       const [cp] = await tx
         .select({
           id: checkpoints.id,
@@ -227,8 +256,10 @@ export class ScoringService {
           stepNumber: checkpoints.stepNumber,
           title: checkpoints.title,
           pointValue: checkpoints.pointValue,
+          challengePoints: challenges.points,
         })
         .from(checkpoints)
+        .innerJoin(challenges, eq(checkpoints.challengeId, challenges.id))
         .where(eq(checkpoints.id, checkpointId))
         .limit(1);
 
@@ -251,7 +282,7 @@ export class ScoringService {
 
       if (existingProgress) {
         return {
-          status: 'already_completed',
+          status: 'already_completed' as const,
           pointsAwarded: 0,
         };
       }
@@ -270,7 +301,7 @@ export class ScoringService {
 
       if (existingSolve) {
         return {
-          status: 'already_solved',
+          status: 'already_solved' as const,
           pointsAwarded: 0,
         };
       }
@@ -306,7 +337,7 @@ export class ScoringService {
         }
       }
 
-      // 5. Lock team row and compute new score
+      // 5. Lock team row
       const [team] = await tx
         .select({
           id: teams.id,
@@ -322,10 +353,27 @@ export class ScoringService {
         throw new Error('TEAM_NOT_FOUND');
       }
 
-      const pointsAwarded = cp.pointValue;
+      // 6. Runtime Point Cap Defense:
+      // Even if configuration was invalid, total checkpoint rewards can never exceed challenge.points.
+      const [awardedCheckpointResult] = await tx
+        .select({
+          totalAwarded: sql<number>`COALESCE(SUM(${checkpoints.pointValue}), 0)::int`,
+        })
+        .from(checkpointProgress)
+        .innerJoin(checkpoints, eq(checkpointProgress.checkpointId, checkpoints.id))
+        .where(
+          and(
+            eq(checkpointProgress.teamId, teamId),
+            eq(checkpoints.challengeId, cp.challengeId)
+          )
+        );
+
+      const alreadyAwarded = awardedCheckpointResult?.totalAwarded || 0;
+      const maxAllowedForCheckpoint = Math.max(0, cp.challengePoints - alreadyAwarded);
+      const pointsAwarded = Math.min(cp.pointValue, maxAllowedForCheckpoint);
       const newTeamScore = team.score + pointsAwarded;
 
-      // 6. Record checkpoint progress (Guaranteed unique by UNIQUE(team_id, checkpoint_id))
+      // 7. Record checkpoint progress (Guaranteed unique by UNIQUE(team_id, checkpoint_id))
       await tx.insert(checkpointProgress).values({
         teamId,
         checkpointId,
@@ -333,25 +381,45 @@ export class ScoringService {
         proofMetadata,
       });
 
-      // 7. Append to immutable score ledger
-      await tx.insert(scoreEvents).values({
-        teamId,
-        challengeId: cp.challengeId,
-        checkpointId: cp.id,
-        eventType: 'checkpoint_solve',
-        points: pointsAwarded,
-        runningTeamScore: newTeamScore,
-      });
+      // 8. Append to immutable score ledger & update team current score
+      if (pointsAwarded > 0) {
+        await tx.insert(scoreEvents).values({
+          teamId,
+          challengeId: cp.challengeId,
+          checkpointId: cp.id,
+          eventType: 'checkpoint_solve',
+          points: pointsAwarded,
+          runningTeamScore: newTeamScore,
+        });
 
-      // 8. Update team current score and timestamp
-      await tx
-        .update(teams)
-        .set({
-          score: newTeamScore,
-          lastScoreAt: sql`NOW()`,
-          updatedAt: sql`NOW()`,
-        })
-        .where(eq(teams.id, teamId));
+        await tx
+          .update(teams)
+          .set({
+            score: newTeamScore,
+            lastScoreAt: sql`NOW()`,
+            updatedAt: sql`NOW()`,
+          })
+          .where(eq(teams.id, teamId));
+
+        eventToEmit = {
+          teamId,
+          teamName: team.name,
+          challengeId: cp.challengeId,
+          checkpointId: cp.id,
+          checkpointNumber: cp.stepNumber,
+          eventType: 'checkpoint_solve',
+          pointsAwarded,
+          newTeamScore,
+          timestamp: new Date(),
+        };
+      } else {
+        await tx
+          .update(teams)
+          .set({
+            updatedAt: sql`NOW()`,
+          })
+          .where(eq(teams.id, teamId));
+      }
 
       logger.info(
         {
@@ -364,27 +432,19 @@ export class ScoringService {
         'Checkpoint solve committed'
       );
 
-      // 9. Post-commit event emission
-      setImmediate(() => {
-        scoringEventBus.emitScoreEvent({
-          teamId,
-          teamName: team.name,
-          challengeId: cp.challengeId,
-          checkpointId: cp.id,
-          checkpointNumber: cp.stepNumber,
-          eventType: 'checkpoint_solve',
-          pointsAwarded,
-          newTeamScore,
-          timestamp: new Date(),
-        });
-      });
-
       return {
-        status: 'correct',
+        status: 'correct' as const,
         pointsAwarded,
         newTeamScore,
       };
     });
+
+    // 9. Post-commit event emission
+    if (eventToEmit) {
+      scoringEventBus.emitScoreEvent(eventToEmit);
+    }
+
+    return result;
   }
 
   /**
@@ -402,7 +462,17 @@ export class ScoringService {
   }> {
     const { teamId, userId, hintId } = params;
 
-    return await db.transaction(async (tx) => {
+    let eventToEmit: {
+      teamId: string;
+      teamName: string;
+      challengeId: string;
+      eventType: 'hint_penalty';
+      pointsAwarded: number;
+      newTeamScore: number;
+      timestamp: Date;
+    } | null = null;
+
+    const result = await db.transaction(async (tx) => {
       // 1. Check if hint is already unlocked
       const [existing] = await tx
         .select()
@@ -482,10 +552,8 @@ export class ScoringService {
             updatedAt: sql`NOW()`,
           })
           .where(eq(teams.id, teamId));
-      }
 
-      setImmediate(() => {
-        scoringEventBus.emitScoreEvent({
+        eventToEmit = {
           teamId,
           teamName: team.name,
           challengeId: hint.challengeId,
@@ -493,8 +561,8 @@ export class ScoringService {
           pointsAwarded: -netDeduction,
           newTeamScore,
           timestamp: new Date(),
-        });
-      });
+        };
+      }
 
       return {
         alreadyUnlocked: false,
@@ -503,6 +571,13 @@ export class ScoringService {
         content: hint.content,
       };
     });
+
+    // 6. Post-commit event emission (only if net penalty was applied and tx committed)
+    if (eventToEmit) {
+      scoringEventBus.emitScoreEvent(eventToEmit);
+    }
+
+    return result;
   }
 
   /**
@@ -539,3 +614,35 @@ export class ScoringService {
 }
 
 export const scoringService = new ScoringService();
+
+// -----------------------------------------------------------------------------
+// DETERMINISTIC LEADERBOARD TIE-BREAKING HELPER
+// -----------------------------------------------------------------------------
+export interface RankedTeam {
+  id: string;
+  name: string;
+  score: number;
+  lastScoreAt: Date | string;
+}
+
+/**
+ * Deterministic tie-breaking comparison:
+ * 1. score DESC
+ * 2. last_score_at ASC (earlier score wins)
+ * 3. id ASC (immutable team identifier final tie-breaker)
+ */
+export function compareTeamRanks(a: RankedTeam, b: RankedTeam): number {
+  // 1. Primary: Higher score first
+  if (b.score !== a.score) {
+    return b.score - a.score;
+  }
+  // 2. Secondary: Earlier lastScoreAt first (FIFO)
+  const aTime = new Date(a.lastScoreAt).getTime();
+  const bTime = new Date(b.lastScoreAt).getTime();
+  if (aTime !== bTime) {
+    return aTime - bTime;
+  }
+  // 3. Final Deterministic Tie-Breaker: Immutable identifier ascending
+  return a.id.localeCompare(b.id);
+}
+

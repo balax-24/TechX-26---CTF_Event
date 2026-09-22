@@ -69,6 +69,10 @@ export class CheckpointsService {
         timingSafeMatch(normalizedProof, cp.secretProofHash);
     } else if (cp.validationType === 'sub_flag') {
       isProofValid = timingSafeMatch(hashFlag(normalizedProof), cp.secretProofHash);
+    } else if (cp.validationType === 'server_callback') {
+      // server_callback is reserved/scaffolded for automated challenge container callbacks.
+      // Participants cannot directly validate server-callback checkpoints via the participant API.
+      throw new Error('SERVER_CALLBACK_ONLY');
     } else {
       // Default: constant-time match
       isProofValid = timingSafeMatch(normalizedProof, cp.secretProofHash);

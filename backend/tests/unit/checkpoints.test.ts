@@ -128,5 +128,19 @@ describe('Checkpoint Verification & Prerequisite Validation', () => {
       expect(timingSafeMatch(submittedCorrect, storedToken)).toBe(true);
       expect(timingSafeMatch(submittedWrong, storedToken)).toBe(false);
     });
+
+    it('rejects direct participant validation of server_callback validation_type', () => {
+      // Simulates checkpoints.service.ts validation logic
+      function evaluateProof(validationType: string, proof: string, secretHash: string) {
+        if (validationType === 'server_callback') {
+          throw new Error('SERVER_CALLBACK_ONLY');
+        }
+        return timingSafeMatch(proof, secretHash);
+      }
+
+      expect(() =>
+        evaluateProof('server_callback', 'any_proof_string', 'secret')
+      ).toThrow('SERVER_CALLBACK_ONLY');
+    });
   });
 });

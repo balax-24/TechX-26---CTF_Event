@@ -24,15 +24,18 @@ Clients are **never** authoritative:
 
 ## 3. Validation Mechanisms (`validation_type`)
 
-Checkpoints support multiple validation strategies:
+Checkpoints categorize validation strategies into **Production-Safe Implemented** and **Reserved Scaffolding**:
 
-| `validation_type` | Description | Verification Logic |
-|---|---|---|
-| `token_proof` | Intermediate JWT or hex token generated during challenge execution | Evaluated via timing-safe string comparison or salted SHA-256 |
-| `sub_flag` | Standard sub-flag in `TECHX{...}` format | Evaluated by hashing the input with `FLAG_SALT` and comparing to `secret_proof_hash` |
-| `server_callback` | Automated trigger from challenge container | Secret proof matched via internal API callback |
+| `validation_type` | Status | Verification Logic | Security Profile |
+|---|---|---|---|
+| `token_proof` | **Production-Safe & Implemented** | Constant-time comparison or salted SHA-256 hash match against `secret_proof_hash` | Participant submits proof token; verified in constant time (`timingSafeMatch`) |
+| `sub_flag` | **Production-Safe & Implemented** | Input trimmed, hashed with `FLAG_SALT` and matched against `secret_proof_hash` | Standard flag format `TECHX{...}` for multi-stage flags |
+| `server_callback` | **Reserved / Scaffolded** | Reserved for future container orchestration infrastructure (e.g. Stage 6/7) | Blocked from direct participant validation endpoint (`SERVER_CALLBACK_ONLY`). Challenge containers must use internal mutual authentication |
 
-All proof evaluations use `timingSafeMatch` (crypto `timingSafeEqual`) to eliminate side-channel timing attacks.
+> [!IMPORTANT]
+> `server_callback` is reserved scaffolding. The public participant API explicitly rejects attempts to submit proofs to `server_callback` checkpoints with `HTTP 400 Bad Request`. Participants can never self-award a server callback checkpoint.
+
+All active proof evaluations use `timingSafeMatch` (`crypto.timingSafeEqual`) to eliminate side-channel timing attacks.
 
 ---
 
@@ -53,7 +56,7 @@ Checkpoints enforce sequential progression within a challenge:
 
 ---
 
-## 5. Checkpoint Concurrency & Idempotency
+## 5. Checkpoint Concurrency, Idempotency & Point Capping
 
 - `checkpoint_progress` enforces a database constraint:
   ```sql
@@ -75,6 +78,7 @@ Checkpoints enforce sequential progression within a challenge:
     "pointsAwarded": 0
   }
   ```
+- **Point Cap Defense**: Checkpoint points are defensively capped at `max(0, challenge.points - alreadyAwardedCheckpoints)` so that total checkpoint rewards can never exceed the challenge's configured point value.
 
 ---
 

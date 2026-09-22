@@ -56,6 +56,9 @@ export const checkpointRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         if (err.message === 'PREREQUISITE_NOT_MET') {
           return reply.badRequest('You must complete preceding checkpoints before attempting this one');
         }
+        if (err.message === 'SERVER_CALLBACK_ONLY') {
+          return reply.badRequest('This checkpoint can only be validated via automated challenge container callback');
+        }
 
         req.log.error({ err }, 'Checkpoint validation error');
         return reply.internalServerError('Failed to validate checkpoint');

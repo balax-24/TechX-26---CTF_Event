@@ -2,24 +2,33 @@
 
 ## 1. Executive Summary & Principles
 
-The TechX CTF 2026 scoring engine acts as a **financial accounting ledger** for competitive points.
+The TechX CTF 2026 scoring engine operates on an **Immutable Ledger + Materialized Score Reconciliation** model.
 - **Server Authority**: The client is never authoritative. Points, scores, solve status, and ranks are calculated exclusively by the backend inside atomic PostgreSQL transactions.
 - **Strict Immutability**: All point adjustments are append-only rows in `score_events`. Past ledger rows are never deleted or mutated.
-- **Double-Entry Consistency**: `teams.score` acts as a materialized cache that must always reconcile with `SUM(score_events.points)`.
+- **Materialized Score Reconciliation**: `teams.score` acts as a materialized cache that must always reconcile with `SUM(score_events.points)`.
 
 ---
 
-## 2. The Capped Component Scoring Model
+## 2. The Capped Component Scoring Model & Invariant
 
 To support multi-step challenges without inflating the maximum obtainable points, TechX CTF 2026 employs a **Capped Component Scoring Model**:
 
-$$ \text{Total Challenge Points} = \text{challenges.points} $$
+$$ \text{checkpoint rewards} + \text{final solve reward} \le \text{challenges.points} $$
 
 1. **Checkpoints**: Partial milestone steps award partial points ($P_{\text{cp}}$) when validated.
 2. **Final Solve**: When the final flag is submitted, the solve reward is dynamically calculated as:
    $$ P_{\text{final}} = \max(0, \text{challenges.points} - \sum P_{\text{cp\_awarded}}) $$
 3. **Scoring Invariant**: For any team and challenge:
-   $$ \sum P_{\text{cp\_awarded}} + P_{\text{final}} - \sum P_{\text{hints}} = \text{Actual Ledger Contribution} $$
+   $$ \text{Gross Challenge Reward} = \sum P_{\text{cp\_awarded}} + P_{\text{final}} \le \text{challenges.points} $$
+   $$ \text{Net Team Contribution} = \sum P_{\text{cp\_awarded}} + P_{\text{final}} - \sum P_{\text{hints}} $$
+
+### Two-Tier Point Cap Defense:
+- **Authoring-Time Validation**: When creating or updating a challenge/checkpoints configuration via `challengeCheckpointsAuthoringSchema` or `validateCheckpointAllocation`, the system rejects configurations where:
+  $$ \sum_{\text{all}} \text{checkpoint.pointValue} > \text{challenge.points} $$
+- **Runtime Defense**: Even in the presence of malicious or invalid database records, `awardCheckpoint` defensively caps the points awarded:
+  $$ P_{\text{allowed}} = \max(0, \text{challenge.points} - P_{\text{alreadyAwarded}}) $$
+  $$ P_{\text{awarded}} = \min(\text{checkpoint.pointValue}, P_{\text{allowed}}) $$
+  Gross challenge points can never exceed `challenges.points` under any circumstance.
 
 ### Example:
 - Challenge Points: `500`
@@ -63,6 +72,8 @@ BEGIN TRANSACTION;
 8. INSERT INTO submissions (audit attempt);
 
 COMMIT;
+
+9. scoringEventBus.emitScoreEvent(...) -> Post-commit event dispatch.
 ```
 
 ---
@@ -95,6 +106,8 @@ When two team members submit the correct flag at the exact same millisecond:
      $$ \text{newScore} = \max(0, \text{team.score} - \text{hint.penalty\_points}) $$
      $$ \text{netDeduction} = \text{team.score} - \text{newScore} $$
   4. If `netDeduction > 0`, an append-only negative ledger event (`hint_penalty`, `points: -netDeduction`) is recorded in `score_events`.
+  5. If `team.score === 0` (so `netDeduction === 0`), no points are deducted, and **no negative score event is created**. This guarantees that:
+     $$ \text{teams.score} === \sum \text{score\_events.points} === 0 $$
 
 ---
 
@@ -104,10 +117,12 @@ Leaderboard tie-breaking is strictly deterministic across all queries:
 ```sql
 ORDER BY
   teams.score DESC,
-  teams.last_score_at ASC
+  teams.last_score_at ASC,
+  teams.id ASC
 ```
-- Higher total score always ranks higher.
-- In the event of a point tie, the team that reached their current score **earlier in time** (`last_score_at ASC`) ranks higher (FIFO principle).
+1. **Primary**: Higher total score ranks higher.
+2. **Secondary**: Earlier `last_score_at` timestamp ranks higher (FIFO principle).
+3. **Final Deterministic Tie-Breaker**: In the rare event of identical score and identical sub-millisecond timestamp, teams are deterministically ordered by immutable UUID (`teams.id ASC`).
 
 ---
 
@@ -119,3 +134,13 @@ const result = await scoringService.reconcileTeamScore(teamId);
 // Returns: { teamScore: number, ledgerSum: number, isConsistent: boolean }
 ```
 If `teamScore !== ledgerSum`, an audit alert is triggered, allowing staff to immediately detect any database divergence.
+
+---
+
+## 8. Post-Commit Event Semantics
+
+Domain events are dispatched to `scoringEventBus` strictly **after** PostgreSQL transactions commit.
+If any query within `db.transaction(...)` fails or encounters an unhandled exception:
+- PostgreSQL issues a `ROLLBACK`.
+- No partial records exist in `team_solves`, `checkpoint_progress`, or `score_events`.
+- No event is ever published to `scoringEventBus`.

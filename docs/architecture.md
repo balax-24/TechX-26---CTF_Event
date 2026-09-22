@@ -29,7 +29,7 @@ TechX CTF 2026 is an IEEE-affiliated, production-grade Capture The Flag platform
                           v                    v
 +-----------------------------+    +-----------------------------+
 |    PostgreSQL 16 (Ledger)   |    |       Redis 7 (In-Memory)   |
-| - Users, Teams, Challenges  |    | - Sliding-Window Limiter    |
+| - Users, Teams, Challenges  |    | - Distributed Rate Limiter  |
 | - Solves, Checkpoints       |    | - Token Blacklists & Cache  |
 | - score_events (Ledger)     |    | - Stage 5 Pub/Sub Channel   |
 +-----------------------------+    +-----------------------------+
@@ -60,14 +60,22 @@ TechX CTF 2026 is an IEEE-affiliated, production-grade Capture The Flag platform
 - Protected challenge file downloads via NGINX `X-Accel-Redirect`.
 
 ### Stage 4: Checkpoints, Flag Submissions & Scoring Engine
-- **Capped Component Scoring Model**: $\text{Final Solve} = \max(0, \text{challenge.points} - \sum \text{checkpointPoints})$. Total challenge contribution strictly equals configured points.
-- **Immutable Financial Ledger**: `score_events` table tracks all point events (`final_solve`, `checkpoint_solve`, `hint_penalty`, `admin_adjustment`) with running balance snapshots.
+- **Capped Component Scoring Model**:
+  $$\text{checkpoint rewards} + \text{final solve reward} \le \text{challenges.points}$$
+  Enforced both via authoring-time configuration validation (`SUM(checkpoints) <= challenge.points`) and runtime point cap defense in `awardCheckpoint`.
+- **Immutable Financial Ledger + Materialized Score Reconciliation**:
+  `score_events` table tracks all point events (`final_solve`, `checkpoint_solve`, `hint_penalty`, `admin_adjustment`) with running balance snapshots. `teams.score` is the materialized cache reconciled against `SUM(score_events.points)`.
 - **Pessimistic Row-Level Locking**: `SELECT ... FOR UPDATE` on `teams` combined with hard unique database constraints (`UNIQUE(team_id, challenge_id)`).
 - **Concurrency & Idempotency**: 50 simultaneous submissions by teammates guarantee exactly 1 reward and 49 duplicate responses without double-scoring.
 - **Sequential Checkpoint Prerequisites**: Anti-tampering prerequisite chain (Step $N$ requires Step $N-1$).
-- **Deterministic Tie-Breaking**: Leaderboard ranking is strictly `score DESC, last_score_at ASC`.
-- **Sliding-Window Rate Limiting**: Redis pipeline rate limiter with in-memory fallback protecting flag and checkpoint submission routes.
-- **Post-Commit Event Decoupling**: Database transactions commit *before* publishing domain events to `scoringEventBus`, avoiding phantom broadcasts.
+- **Deterministic Tie-Breaking**:
+  $$\text{ORDER BY score DESC, last\_score\_at ASC, id ASC}$$
+  Deterministic final tie-breaking using immutable team UUIDs.
+- **Dual-Tier Sliding-Window Rate Limiting**:
+  - *Redis*: Authoritative distributed sliding-window limiter across all horizontal nodes.
+  - *In-Memory*: Degraded single-instance fallback when Redis is unreachable, with observable warning logs.
+- **Strict Post-Commit Event Boundary**:
+  Domain events are emitted via `scoringEventBus` strictly **after** database transactions commit. Rolled-back or failed transactions never emit score events.
 
 ---
 
@@ -79,5 +87,5 @@ TechX CTF 2026 is an IEEE-affiliated, production-grade Capture The Flag platform
 | `checkpoint_progress` | `UNIQUE(team_id, checkpoint_id)` | Prevents duplicate checkpoint points across concurrent requests |
 | `team_hints` | `UNIQUE(team_id, hint_id)` | Prevents duplicate hint purchases or penalties |
 | `checkpoints` | `UNIQUE(challenge_id, step_number)` | Enforces unique step numbering within a challenge |
-| `teams` | `INDEX(score DESC, last_score_at ASC)` | Optimizes deterministic leaderboard queries |
+| `teams` | `INDEX(score, last_score_at)` | Accelerates deterministic leaderboard queries |
 | `score_events` | `INDEX(team_id, created_at)` | Accelerates score reconciliation and team audit timeline |

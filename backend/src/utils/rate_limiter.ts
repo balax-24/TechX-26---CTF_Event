@@ -7,15 +7,29 @@ interface MemoryBucket {
 }
 const memoryStore = new Map<string, MemoryBucket>();
 
+export interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  mode: 'redis' | 'memory_fallback';
+  isFallback: boolean;
+}
+
 /**
  * Sliding-window rate limiter.
  * Limits `key` to `maxRequests` per `windowMs`.
+ *
+ * Distributed Architecture Guarantee:
+ * - When Redis is online: Uses Redis sorted sets (ZREMRANGEBYSCORE, ZADD, ZCARD, PEXPIRE) as
+ *   the authoritative distributed rate limiter across all horizontal nodes.
+ * - When Redis is offline: Automatically degrades to an in-memory sliding-window store.
+ *   Note: In-memory fallback is strictly single-instance; it does not provide distributed
+ *   coordination across separate Node.js processes.
  */
 export async function checkRateLimit(
   key: string,
   maxRequests: number,
   windowMs: number
-): Promise<{ allowed: boolean; remaining: number }> {
+): Promise<RateLimitResult> {
   const now = Date.now();
   const windowStart = now - windowMs;
 
@@ -37,10 +51,18 @@ export async function checkRateLimit(
       const allowed = count <= maxRequests;
       const remaining = Math.max(0, maxRequests - count);
 
-      return { allowed, remaining };
+      return {
+        allowed,
+        remaining,
+        mode: 'redis',
+        isFallback: false,
+      };
     }
   } catch (err: any) {
-    logger.warn({ err: err.message }, 'Redis rate limiter fallback to in-memory store');
+    logger.warn(
+      { err: err.message, key },
+      'Redis rate limiter unavailable — fallback to in-memory store (degraded single-instance mode)'
+    );
   }
 
   // Fallback: In-memory sliding window
@@ -57,5 +79,17 @@ export async function checkRateLimit(
   const allowed = bucket.timestamps.length <= maxRequests;
   const remaining = Math.max(0, maxRequests - bucket.timestamps.length);
 
-  return { allowed, remaining };
+  return {
+    allowed,
+    remaining,
+    mode: 'memory_fallback',
+    isFallback: true,
+  };
+}
+
+/**
+ * Diagnostic / testing helper to clear the in-memory rate limiter store.
+ */
+export function clearMemoryRateLimiter(): void {
+  memoryStore.clear();
 }

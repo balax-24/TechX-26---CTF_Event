@@ -309,3 +309,25 @@ Please review the progress. Once you are ready, we will proceed to **Stage 4 —
 7. **Testing**:
    - All 83 unit and integration tests passing across 12 test suites.
    - Clean TypeScript build with zero errors.
+
+---
+
+# Stage 4 Hardening Pass Verified
+
+A focused production-hardening pass has been performed on Stage 4:
+1. **Challenge Point Cap**:
+   - Added authoring-time validation (`challengeCheckpointsAuthoringSchema` and `validateCheckpointAllocation`) rejecting `SUM(checkpoints) > challenge.points`.
+   - Added runtime defense in `awardCheckpoint` defensively capping points awarded so total checkpoints cannot exceed `challenge.points`.
+2. **Deterministic Tie-Breaking**:
+   - Implemented `compareTeamRanks` enforcing deterministic ranking: `score DESC, last_score_at ASC, id ASC`.
+3. **Strict Post-Commit Event Emission**:
+   - Restructured `awardFinalSolve`, `awardCheckpoint`, and `unlockHintWithPenalty` so events emit strictly after `db.transaction(...)` successfully commits. Rolled-back transactions emit zero events.
+4. **Server Callback Security**:
+   - Enforced `SERVER_CALLBACK_ONLY` guard on participant checkpoint validation endpoint to prevent participant forging.
+5. **Rate-Limiter Fallback Semantics**:
+   - Explicitly exposed `mode` and `isFallback` metadata; added tests for Redis pipeline, in-memory fallback, repeated requests, and window expiry.
+6. **Financial Ledger Invariants**:
+   - Created comprehensive `ledger_invariants.test.ts` proving `teams.score === SUM(score_events.points)` across all 10 mutation scenarios and transaction rollbacks.
+7. **Test Results**:
+   - 14 test suites, 99 tests passing with 100% success rate.
+   - 0 TypeScript compilation errors.

@@ -477,4 +477,44 @@ Completed a targeted security, integrity, and concurrency hardening pass over St
    - 0 TypeScript compilation errors (`npm run build`).
 
 
+================================================================================
+STAGE 7: PARTICIPANT FRONTEND & UX — COMPLETED
+================================================================================
+Implemented production participant-facing web application for TechX Madras 2026:
+1. **Frontend Architecture & Zero-CDN Offline Resilience**:
+   - Built with React 18, Vite, TypeScript, and a custom Vanilla CSS tokenized design system (`#6A1B9A` primary purple, deep technical dark `#0D0F17`, high-contrast WCAG 2.1 AA).
+   - Zero external CDN dependencies: self-hosted fonts and SVGs allow full functionality on isolated college LAN and event server environments.
+2. **Server Authority Enforcement**:
+   - Strictly enforced the Server Authority Rule: the frontend is purely a presentation layer; all scores, challenge releases, flag validations, hint penalties, and standings are server-authoritative.
+   - Session-bound CSRF integration: automatically retrieves tokens from `/api/v1/auth/csrf` and injects `X-CSRF-Token` on state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`).
+3. **Single SSE Connection & Monotonic Leaderboard Sync**:
+   - `LeaderboardContext` maintains a single active EventSource stream to `/api/v1/leaderboard/stream`, preventing browser connection storms.
+   - Enforces monotonic version sequencing: contiguous events update standings deterministically; version gaps trigger immediate authoritative snapshot recovery (`GET /api/v1/leaderboard`).
+   - Exponential backoff with jitter on reconnects.
+4. **Interactive Participant Pages & Components**:
+   - `LandingPage`: Event overview, schedule, rules, and live/upcoming status badge.
+   - `LoginPage` & `RegisterPage`: Secure HttpOnly cookie auth, error handling, redirect restoration.
+   - `DashboardPage`: Real-time status cards, informational countdown, team score, solved count.
+   - `ChallengesPage`: Filterable category tabs, difficulty chips, solved indicators, responsive grid.
+   - `ChallengeModal`: Description, connection info, attachments, sequential checkpoints, hints, and flag submission.
+   - `CheckpointProgress`: Prerequisite chain enforcement, proof submission forms.
+   - `HintCard`: Unlock confirmation modal displaying point penalty.
+   - `SubmissionForm`: Single-flight submit protection, rate-limit warnings, instant feedback.
+   - `LeaderboardPage`: Top 3 podium, table ranking, highlight for authenticated team (`YOU`), live connection status.
+   - `TeamPage`: Team creation, invite code sharing (`TECHX-XXXX-YYYY`), member roster, captain delegation, leave team.
+5. **Competition Lifecycle Gating**:
+   - Dynamic `StatusBanner` alerting contestants during `PAUSED` or `ENDED` competition states, or if their team is `DISABLED` or `DISQUALIFIED`.
+   - Submissions, checkpoints, and hints are disabled on non-live states.
+6. **Multi-Stage Docker Ingress**:
+   - Updated `docker/nginx/Dockerfile` to multi-stage build: Node 20 builder compiles React SPA, NGINX Alpine serves static bundle and proxies `/api/v1` to Fastify backend.
+7. **Additive Backend Route**:
+   - Added public `GET /api/v1/competition/state` route returning contest lifecycle, schedule, and timezone.
+8. **Verification & Testing**:
+   - **Backend**: 34 test files, 253 tests passing (100% success rate, 0 regressions).
+   - **Frontend**: 6 test files, 19 tests passing (100% success rate).
+   - **Total**: 40 test files, 272 tests passing.
+   - **Build**: Backend and Frontend TypeScript compilation pass with 0 errors. Zero secrets in frontend bundle.
+
+
+
 

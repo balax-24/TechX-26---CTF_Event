@@ -18,6 +18,7 @@ import { submissionRoutes } from './modules/submissions/submissions.routes.js';
 import { checkpointRoutes } from './modules/checkpoints/checkpoints.routes.js';
 import { leaderboardRoutes } from './modules/leaderboard/leaderboard.routes.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
+import { competitionRoutes } from './modules/competition/competition.routes.js';
 import { sseManager } from './modules/realtime/sse.manager.js';
 import { outboxWorker } from './modules/realtime/outbox.worker.js';
 import { redisSubscriber } from './modules/realtime/redis.subscriber.js';
@@ -172,6 +173,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(checkpointRoutes, { prefix: '/api/v1/checkpoints' });
   await app.register(leaderboardRoutes, { prefix: '/api/v1/leaderboard' });
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
+  await app.register(competitionRoutes, { prefix: '/api/v1/competition' });
 
   // Lifecycle cleanup hook on application close
   app.addHook('onClose', async () => {

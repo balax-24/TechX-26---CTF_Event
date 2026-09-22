@@ -1,0 +1,126 @@
+import React, { useState } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { Card } from '../components/common/Card';
+import { Input } from '../components/common/Input';
+import { Button } from '../components/common/Button';
+
+export const LoginPage: React.FC = () => {
+  const [emailOrUsername, setEmailOrUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const from = (location.state as any)?.from?.pathname || '/dashboard';
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailOrUsername || !password) {
+      setError('Please provide your username/email and password.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await login({ emailOrUsername, password });
+      navigate(from, { replace: true });
+    } catch (err: any) {
+      setError(err.message || 'Invalid credentials or account disabled.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="container"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: 1,
+        padding: '40px 16px',
+      }}
+    >
+      <Card style={{ width: '100%', maxWidth: '440px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+          <h2 style={{ fontSize: 'var(--text-2xl, 1.5rem)', marginBottom: '8px' }}>
+            Participant Sign In
+          </h2>
+          <p style={{ fontSize: 'var(--text-sm, 0.875rem)' }}>
+            Enter your credentials to access challenges and team scoring.
+          </p>
+        </div>
+
+        {error && (
+          <div
+            role="alert"
+            style={{
+              padding: '12px',
+              backgroundColor: 'var(--color-danger-bg, rgba(239, 68, 68, 0.15))',
+              border: '1px solid var(--color-danger-border, rgba(239, 68, 68, 0.3))',
+              borderRadius: 'var(--radius-md, 8px)',
+              color: 'var(--color-danger, #EF4444)',
+              fontSize: 'var(--text-sm, 0.875rem)',
+              marginBottom: '20px',
+              fontWeight: 500,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <Input
+            label="Email or Username"
+            type="text"
+            value={emailOrUsername}
+            onChange={(e) => setEmailOrUsername(e.target.value)}
+            disabled={isSubmitting}
+            required
+            autoFocus
+          />
+
+          <Input
+            label="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={isSubmitting}
+            required
+          />
+
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            isLoading={isSubmitting}
+            style={{ width: '100%', marginTop: '8px' }}
+          >
+            Sign In
+          </Button>
+        </form>
+
+        <div
+          style={{
+            marginTop: '24px',
+            textAlign: 'center',
+            fontSize: 'var(--text-sm, 0.875rem)',
+            color: 'var(--color-text-secondary, #94A3B8)',
+          }}
+        >
+          Don't have an account?{' '}
+          <Link to="/register" style={{ fontWeight: 600 }}>
+            Register here
+          </Link>
+        </div>
+      </Card>
+    </div>
+  );
+};

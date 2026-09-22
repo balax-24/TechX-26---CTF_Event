@@ -1,10 +1,10 @@
 import { eq, and, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { challenges, submissions } from '../../db/schema.js';
+import { challenges, submissions, teams } from '../../db/schema.js';
 import { verifyFlag } from '../../utils/flags.js';
 import { scoringService, FinalSolveResult } from '../scoring/scoring.service.js';
 import { SubmitFlagInput } from './submissions.schema.js';
-import { config } from '../../config/env.js';
+import { competitionService } from '../competition/competition.service.js';
 
 export interface SubmissionResponse {
   status: 'correct' | 'incorrect' | 'already_solved';
@@ -27,19 +27,37 @@ export class SubmissionsService {
   }): Promise<SubmissionResponse> {
     const { userId, teamId, input, ipAddress, userAgent, isAdmin = false } = params;
 
-    // 1. Verify Competition State
-    if (config.COMPETITION_STATE !== 'active' && !isAdmin) {
-      throw new Error('COMPETITION_NOT_ACTIVE');
+    // 0. Prohibit administrator participation through normal flag submission
+    if (isAdmin) {
+      throw new Error('ADMIN_PARTICIPATION_FORBIDDEN');
     }
 
-    // 2. Fetch challenge definition
-    const conditions = [eq(challenges.slug, input.challengeSlug)];
-    if (!isAdmin) {
-      conditions.push(eq(challenges.status, 'published'));
-      conditions.push(
-        sql`(${challenges.releaseTime} IS NULL OR ${challenges.releaseTime} <= NOW())`
-      );
+    // 1. Verify Competition State
+    await competitionService.requireLiveCompetition();
+
+    // 2. Verify Team Status (Active check)
+    const [team] = await db
+      .select({ id: teams.id, status: teams.status })
+      .from(teams)
+      .where(eq(teams.id, teamId))
+      .limit(1);
+
+    if (!team) {
+      throw new Error('TEAM_NOT_FOUND');
     }
+    if (team.status === 'disqualified') {
+      throw new Error('TEAM_DISQUALIFIED');
+    }
+    if (team.status !== 'active') {
+      throw new Error('TEAM_DISABLED');
+    }
+
+    // 3. Fetch challenge definition
+    const conditions = [
+      eq(challenges.slug, input.challengeSlug),
+      eq(challenges.status, 'published'),
+      sql`(${challenges.releaseTime} IS NULL OR ${challenges.releaseTime} <= NOW())`,
+    ];
 
     const [chal] = await db
       .select({

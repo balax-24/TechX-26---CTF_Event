@@ -93,6 +93,24 @@ TechX CTF 2026 is an IEEE-affiliated, production-grade Capture The Flag platform
 - **Unbuffered Reverse Proxying**:
   NGINX configurations for LAN and Production with `proxy_buffering off; chunked_transfer_encoding off;` for low-latency streaming.
 
+### Stage 6: Admin & Competition Control Plane
+- **Authoritative Competition Lifecycle State Machine**:
+  `DRAFT`, `SCHEDULED`, `REGISTRATION_OPEN`, `LIVE`, `PAUSED`, `ENDED`, `ARCHIVED` with transition constraints.
+- **Participant Gating**:
+  Non-live states immediately reject participant submissions, checkpoint validations, and hint unlocks (`COMPETITION_PAUSED`, `COMPETITION_ENDED`, `COMPETITION_NOT_ACTIVE`).
+- **Server-Side RBAC & Route Isolation**:
+  Isolated `/api/v1/admin/*` API namespace protected with actor verification derived from JWT tokens. Participant accounts cannot access admin routes; admin accounts cannot participate through normal participant routes. Superadmin hierarchy for sensitive role promotions.
+- **Challenge Immutability Locking**:
+  Freezes scoring-critical fields (`points`, `flagHash`, checkpoints) once a challenge has active solves (`solveCount > 0`), while permitting metadata revisions (title, story, description) with full audit logging.
+- **Team & User Moderation**:
+  `ACTIVE`, `DISABLED`, `DISQUALIFIED` team states with `isBanned` synchronization. Reconstructable identities without destructive deletions.
+- **Administrative Score Adjustments**:
+  Zero direct updates to `score_events`. Adjustments are appended as immutable ledger records (`eventType: 'admin_adjustment'`), updating `teams.score` while preserving mathematical reconciliation $\sum \text{ledger} = \text{score}$, drawing monotonic `leaderboardVersion`, publishing via transactional outbox, and recording audit logs with idempotency caching.
+- **Append-Only Audit Logging & Redaction**:
+  Transactional audit logging capturing actor, role, IP, action, entity, diffs, and reason. Recursive redaction of passwords, flags, secrets, and hashes. No delete or update APIs.
+- **CSRF & Rate Limiting**:
+  CSRF custom-header protection for cookie-authenticated mutations and dual-tier sliding window rate limits for admin mutations.
+
 ---
 
 ## 4. Database Constraints & Integrity Matrix
@@ -104,6 +122,10 @@ TechX CTF 2026 is an IEEE-affiliated, production-grade Capture The Flag platform
 | `team_hints` | `UNIQUE(team_id, hint_id)` | Prevents duplicate hint purchases or penalties |
 | `checkpoints` | `UNIQUE(challenge_id, step_number)` | Enforces unique step numbering within a challenge |
 | `teams` | `INDEX(score, last_score_at)` | Accelerates deterministic leaderboard queries |
+| `teams` | `INDEX(status)` | Accelerates filtering by moderation status |
 | `score_events` | `INDEX(team_id, created_at)` | Accelerates score reconciliation and team audit timeline |
 | `score_event_outbox` | `UNIQUE(event_id)` | Guarantees immutable event identity across retries |
 | `score_event_outbox` | `INDEX(published_at, created_at)` | Optimizes outbox worker polling for pending unpublished events |
+| `audit_logs` | `INDEX(entity_type, entity_id)` | Accelerates target entity audit retrieval |
+| `audit_logs` | `INDEX(actor_id)` | Accelerates administrative actor activity investigation |
+| `admin_idempotency_keys` | `PRIMARY KEY (key)` | Prevents duplicate execution of administrative adjustments |

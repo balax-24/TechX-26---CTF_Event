@@ -396,4 +396,49 @@ A focused production-hardening pass has been performed on Stage 4:
 5. **Verification**:
    - 22 test suites, 138 tests passing with 100% success rate.
    - 0 TypeScript compilation errors.
+
+---
+
+# Stage 6 Complete: Admin & Competition Control Plane Verified
+
+**Stage 6: Admin & Competition Control Plane** has been engineered, tested, and verified:
+1. **Authoritative Competition Lifecycle State Machine**:
+   - Explicit lifecycle states: `DRAFT`, `SCHEDULED`, `REGISTRATION_OPEN`, `LIVE`, `PAUSED`, `ENDED`, `ARCHIVED`.
+   - Strict transition graph preventing invalid or backward jumps (e.g. `ARCHIVED -> LIVE`, `ENDED -> LIVE`, `DRAFT -> ENDED`).
+   - Gating on participant-facing operations: non-live states immediately reject flag submissions, checkpoint validations, and hint unlocks with explicit domain errors (`COMPETITION_PAUSED`, `COMPETITION_ENDED`, `COMPETITION_NOT_ACTIVE`).
+2. **Dedicated Admin API Namespace & RBAC Enforcements**:
+   - Isolated `/api/v1/admin/*` API namespace.
+   - Server-side RBAC matrix enforced via Fastify preHandlers (`authenticate`, `requireRole(['admin', 'superadmin'])`).
+   - Superadmin hierarchy for sensitive operations (user role promotion/demotion).
+   - Strict prevention of admin participation through ordinary participant submission routes (`ADMIN_PARTICIPATION_FORBIDDEN`).
+   - Actor identity is strictly derived from verified session tokens (`req.user`), never from client-controlled request bodies.
+3. **Challenge Administration & Scoring Immutability**:
+   - Full CRUD for challenges, checkpoints, and hints with schema validation and secret masking.
+   - Enforces Stage 4 scoring invariant: `SUM(checkpoint points) <= challenge.points`.
+   - Freezes scoring-critical fields (`points`, `flagHash`, checkpoints) once active solves exist (`solveCount > 0`), while allowing non-scoring metadata edits (title, story, description) with full audit trail.
+4. **Team & User Moderation**:
+   - `ACTIVE`, `DISABLED`, `DISQUALIFIED` team states with `isBanned` synchronization.
+   - Disqualified and disabled teams cannot perform scoring operations.
+   - Historical identities and score history are permanently preserved (no destructive deletions).
+   - Safe team renaming with duplicate name collision guards.
+   - User account activation/deactivation and superadmin role management with self-demotion prevention.
+5. **Administrative Score Adjustments & Ledger Integrity**:
+   - Strictly prohibits direct updates/deletions on `score_events`.
+   - Appends immutable ledger rows with `eventType: 'admin_adjustment'` and exact point deltas.
+   - Reconciles `teams.score = SUM(score_events.points)` mathematically.
+   - Monotonic `leaderboardVersion` drawn from `leaderboard_version_seq`.
+   - Publishes transactional outbox event for real-time SSE leaderboard convergence.
+   - Idempotency key support prevents duplicate adjustments on network retries or administrator double-clicks.
+6. **Append-Only Audit Logging with Secret Redaction**:
+   - Captures actor ID, role, IP, action, entity, diffs (previous/new state), reason, and request ID.
+   - Recursive redaction (`[REDACTED]`) for passwords, flags, secrets, tokens, and hashes.
+   - Zero update or delete endpoints exposed.
+7. **CSRF & Rate Limiting**:
+   - CSRF custom-header protection for cookie-authenticated mutations.
+   - 60 mutations/minute sliding window rate limiting on admin endpoints.
+8. **Verification & Tests**:
+   - 29 test suites, **216 tests passing with 100% success rate**.
+   - Concurrency tests passing: 100 simultaneous score adjustments, concurrent pause/resume, concurrent disqualify vs solve.
+   - 0 TypeScript compilation errors.
+
 

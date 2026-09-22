@@ -1,10 +1,10 @@
 import { eq, and, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { checkpoints, challenges } from '../../db/schema.js';
+import { checkpoints, challenges, teams } from '../../db/schema.js';
 import { timingSafeMatch } from '../../utils/crypto.js';
 import { hashFlag } from '../../utils/flags.js';
 import { scoringService, CheckpointAwardResult } from '../scoring/scoring.service.js';
-import { config } from '../../config/env.js';
+import { competitionService } from '../competition/competition.service.js';
 
 export interface CheckpointValidationResponse {
   status: 'correct' | 'incorrect' | 'already_completed' | 'already_solved';
@@ -25,9 +25,29 @@ export class CheckpointsService {
   }): Promise<CheckpointValidationResponse> {
     const { userId, teamId, checkpointId, proof, isAdmin = false } = params;
 
+    // 0. Prohibit administrator participation through normal checkpoint validation
+    if (isAdmin) {
+      throw new Error('ADMIN_PARTICIPATION_FORBIDDEN');
+    }
+
     // 1. Verify Competition State
-    if (config.COMPETITION_STATE !== 'active' && !isAdmin) {
-      throw new Error('COMPETITION_NOT_ACTIVE');
+    await competitionService.requireLiveCompetition();
+
+    // 2. Verify Team Status (Active check)
+    const [team] = await db
+      .select({ id: teams.id, status: teams.status })
+      .from(teams)
+      .where(eq(teams.id, teamId))
+      .limit(1);
+
+    if (!team) {
+      throw new Error('TEAM_NOT_FOUND');
+    }
+    if (team.status === 'disqualified') {
+      throw new Error('TEAM_DISQUALIFIED');
+    }
+    if (team.status !== 'active') {
+      throw new Error('TEAM_DISABLED');
     }
 
     // 2. Fetch checkpoint and parent challenge

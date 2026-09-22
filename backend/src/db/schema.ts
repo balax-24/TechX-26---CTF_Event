@@ -48,6 +48,7 @@ export const teams = pgTable(
     captainId: uuid('captain_id').notNull().references(() => users.id),
     score: integer('score').notNull().default(0),
     lastScoreAt: timestamp('last_score_at', { withTimezone: true }).notNull().defaultNow(),
+    status: varchar('status', { length: 20 }).notNull().default('active'), // 'active', 'disabled', 'disqualified'
     isBanned: boolean('is_banned').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -55,6 +56,7 @@ export const teams = pgTable(
   (table) => ({
     teamScoreTiebreakIdx: index('idx_teams_score_tiebreak').on(table.score, table.lastScoreAt),
     teamNameIdx: uniqueIndex('idx_teams_name').on(table.name),
+    teamStatusIdx: index('idx_teams_status').on(table.status),
   })
 );
 
@@ -291,15 +293,22 @@ export const auditLogs = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     actorId: uuid('actor_id').references(() => users.id),
+    actorRole: varchar('actor_role', { length: 20 }),
     actorIp: varchar('actor_ip', { length: 45 }).notNull(),
     action: varchar('action', { length: 100 }).notNull(),
     entityType: varchar('entity_type', { length: 50 }).notNull(),
     entityId: varchar('entity_id', { length: 100 }),
+    previousState: jsonb('previous_state'),
+    newState: jsonb('new_state'),
+    reason: text('reason'),
+    requestId: varchar('request_id', { length: 64 }),
     detailsJson: jsonb('details_json'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     auditActionCreatedIdx: index('idx_audit_logs_action_created').on(table.action, table.createdAt),
+    auditEntityIdx: index('idx_audit_logs_entity').on(table.entityType, table.entityId),
+    auditActorIdx: index('idx_audit_logs_actor').on(table.actorId),
   })
 );
 
@@ -341,4 +350,33 @@ export const scoreEventOutbox = pgTable(
     outboxVersionIdx: index('idx_score_event_outbox_version').on(table.leaderboardVersion),
   })
 );
+
+// -----------------------------------------------------------------------------
+// 17. COMPETITION STATE
+// -----------------------------------------------------------------------------
+export const competitionState = pgTable('competition_state', {
+  id: varchar('id', { length: 50 }).primaryKey().default('default'),
+  name: varchar('name', { length: 150 }).notNull().default('TechX CTF 2026'),
+  state: varchar('state', { length: 30 }).notNull().default('draft'), // 'draft', 'scheduled', 'registration_open', 'live', 'paused', 'ended', 'archived'
+  startTime: timestamp('start_time', { withTimezone: true }),
+  endTime: timestamp('end_time', { withTimezone: true }),
+  registrationStartTime: timestamp('registration_start_time', { withTimezone: true }),
+  registrationEndTime: timestamp('registration_end_time', { withTimezone: true }),
+  timezone: varchar('timezone', { length: 50 }).notNull().default('Asia/Kolkata'),
+  isSubmissionEnabled: boolean('is_submission_enabled').notNull().default(true),
+  defaultChallengeVisibility: varchar('default_challenge_visibility', { length: 20 }).notNull().default('hidden'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// -----------------------------------------------------------------------------
+// 18. ADMIN IDEMPOTENCY KEYS
+// -----------------------------------------------------------------------------
+export const adminIdempotencyKeys = pgTable('admin_idempotency_keys', {
+  key: varchar('key', { length: 128 }).primaryKey(),
+  action: varchar('action', { length: 100 }).notNull(),
+  actorId: uuid('actor_id').notNull().references(() => users.id),
+  responseJson: jsonb('response_json').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 

@@ -9,6 +9,7 @@ import {
   hints,
   teamHints,
   teamSolves,
+  teams,
 } from '../../db/schema.js';
 import { ChallengeFilterInput } from './challenges.schema.js';
 
@@ -343,6 +344,25 @@ export class ChallengesService {
    * Unlocks a hint for a team, applying score penalties atomically via the scoring engine.
    */
   async unlockHint(slug: string, hintId: string, userId: string, teamId: string) {
+    const { competitionService } = await import('../competition/competition.service.js');
+    await competitionService.requireLiveCompetition();
+
+    const [team] = await db
+      .select({ id: teams.id, status: teams.status })
+      .from(teams)
+      .where(eq(teams.id, teamId))
+      .limit(1);
+
+    if (!team) {
+      throw new Error('TEAM_NOT_FOUND');
+    }
+    if (team.status === 'disqualified') {
+      throw new Error('TEAM_DISQUALIFIED');
+    }
+    if (team.status !== 'active') {
+      throw new Error('TEAM_DISABLED');
+    }
+
     const [hint] = await db
       .select({
         id: hints.id,

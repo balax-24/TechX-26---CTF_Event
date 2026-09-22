@@ -107,6 +107,21 @@ export const challengeRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
           hint: result,
         });
       } catch (err: any) {
+        if (err.message === 'COMPETITION_PAUSED') {
+          return reply.forbidden('The competition is currently paused');
+        }
+        if (err.message === 'COMPETITION_ENDED' || err.message === 'COMPETITION_ARCHIVED') {
+          return reply.forbidden('The competition has ended');
+        }
+        if (err.message === 'COMPETITION_NOT_ACTIVE' || err.message === 'SUBMISSIONS_DISABLED') {
+          return reply.forbidden('Submissions are not permitted at this time');
+        }
+        if (err.message === 'TEAM_DISQUALIFIED') {
+          return reply.forbidden('Team has been disqualified');
+        }
+        if (err.message === 'TEAM_DISABLED') {
+          return reply.forbidden('Team is currently disabled');
+        }
         if (err.message === 'HINT_NOT_FOUND') {
           return reply.notFound('Hint not found for this challenge');
         }

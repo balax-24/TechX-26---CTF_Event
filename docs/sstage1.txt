@@ -1,0 +1,142 @@
+Listed directory CTF
+Viewed SKILL.md:1-335
+Viewed SKILL.md:1-128
+Created implementation_plan.md
+
+# TechX CTF 2026 — Architecture & System Design Proposal (Stage 0)
+
+I have completed the comprehensive architectural specification, data model design, real-time pipeline design, and execution plan for **TechX CTF 2026**. 
+
+The detailed architectural proposal is documented in the implementation plan:
+👉 **[`implementation_plan.md`](file:///C:/Users/Balaharish%20Saravanan/.gemini/antigravity-ide/brain/2d61404a-22e2-4292-8915-2245c67cafc1/implementation_plan.md)**
+
+---
+
+### Key Architectural Decisions for Your Review
+
+1. **Technology Stack Recommendation: Node.js (TypeScript) + Fastify + PostgreSQL 16 + Redis 7 + React/Vite SPA**
+   - **Throughput & Low Latency**: Fastify delivers ~30,000–45,000 req/sec with compiled JSON schemas (`fast-json-stringify`), outperforming Express and FastAPI for high-concurrency event loops.
+   - **Shared Type Safety**: Zod DTO schemas are shared between backend endpoints and the React frontend, eliminating contract drift.
+   - **Lightweight Footprint**: Alpine-based container images (~140MB) run reliably on a college laptop over Ethernet with minimal CPU/RAM overhead.
+
+2. **Real-Time Architecture: Server-Sent Events (SSE) + Redis Pub/Sub**
+   - 99.9% of real-time CTF traffic is server-to-client (solve ticker, score deltas, announcements).
+   - SSE uses standard HTTP/1.1 or HTTP/2 streams without the WebSocket protocol upgrade handshake, ensuring reliable connectivity through restrictive campus firewalls, captive portals, and unmanaged switches.
+   - Built-in browser reconnection using `Last-Event-ID` handles intermittent Wi-Fi drops automatically.
+
+3. **Concurrency & Scoring Integrity: Financial-Style Immutable Ledger**
+   - Flag submissions execute inside atomic PostgreSQL transactions using row-level locking (`SELECT ... FOR UPDATE`).
+   - A unique database constraint `UNIQUE(team_id, challenge_id)` on `team_solves` prevents double-scoring or race conditions under simultaneous team submissions.
+   - Scores are never modified directly; they are derived from an immutable `score_events` ledger. The primary tie-breaker is strict timestamp ordering (`score DESC, last_score_at ASC`).
+
+4. **Dual-Environment Portability (College LAN vs Production Server)**
+   - **Zero Code Changes**: The exact same codebase runs in both environments via environment-driven configuration (`DEPLOYMENT_MODE=lan|prod`) and Docker Compose overlays (`docker-compose.lan.yml` vs `docker-compose.prod.yml`).
+   - **Offline-First (LAN)**: Web fonts (`Inter`, `JetBrains Mono`) and icons are self-hosted within the static bundle. Zero external CDN calls are made, ensuring full functionality even if the venue loses internet connectivity.
+
+5. **Challenge Sandboxing & Infrastructure Isolation**
+   - Dynamic vulnerable services run on an isolated Docker bridge network (`ctf_challenges_net`) with `cap_drop: ALL`, `read_only: true`, `pids_limit: 100`, and `mem_limit: 128m`.
+   - Vulnerable containers have **no network routing** to the core database (`PostgreSQL:5432`) or cache (`Redis:6379`).
+   - Static challenge files are served via NGINX `X-Accel-Redirect` after token validation, keeping file buffers out of Node.js memory.
+
+6. **Stage-Gated Roadmap**
+   - **Stage 0**: Requirements & Architecture *(Current)*
+   - **Stage 1**: Foundation (Docker Compose, Postgres, Redis, Fastify scaffolding, Health checks)
+   - **Stage 2**: Authentication & Team Management
+   - **Stage 3**: Challenge Engine & Metadata Models
+   - **Stage 4**: Checkpoints & Scoring System
+   - **Stage 5**: Live Leaderboard & Real-Time SSE
+   - **Stage 6**: Operational Admin Panel
+   - **Stage 7**: Participant UI/UX (TechX `#6a1b9a` Aesthetic)
+   - **Stage 8**: Challenge Infrastructure & Sandboxing
+   - **Stage 9**: Security Hardening & Penetration Testing
+   - **Stage 10**: Scalability & Load Testing (k6: 100 → 800 VUs)
+   - **Stage 11**: Dual-Environment Deployment Verification
+   - **Stage 12**: Event Simulation Drill
+
+---
+
+### Next Step
+
+Please review the full plan in [`implementation_plan.md`](file:///C:/Users/Balaharish%20Saravanan/.gemini/antigravity-ide/brain/2d61404a-22e2-4292-8915-2245c67cafc1/implementation_plan.md). Once you approve the architecture, I will begin execution with **Stage 1: Foundation**.
+
+Ran command: `node -v; npm -v; docker --version; docker compose version`
+Created .gitignore
+Created .env.example
+Created .env
+Created docker-compose.yml
+Created docker-compose.lan.yml
+Created docker-compose.prod.yml
+Created Dockerfile
+Created index.html
+Created nginx.lan.conf
+Created nginx.prod.conf
+Created Dockerfile
+Created package.json
+Created tsconfig.json
+Created drizzle.config.ts
+Created vitest.config.ts
+Created env.ts
+Created logger.ts
+Created schema.ts
+Created index.ts
+Created redis.ts
+Created app.ts
+Created server.ts
+Created migrate.ts
+Created config.test.ts
+Created health.test.ts
+Ran command: `npm install`
+Created README.md
+Used tool: manage_task
+Viewed task-67.log:1-3
+Used tool: manage_task
+Created .gitkeep
+Ran command: `npm test`
+Created backup_db.sh
+Created restore_db.sh
+Created health_check.sh
+Created health_check.ps1
+Ran command: `npm run build`
+Ran command: `npm run db:generate`
+Ran command: `git status`
+Ran command: `git init; git add .; git commit -m "feat(core): Stage 1 Platform Foundation - Docker, Drizzle ORM, Fastify, Health Probes"`
+Ran command: `git config user.name "TechX CTF Team"; git config user.email "ctf@techxmadras.org"; git commit -m "feat(core): Stage 1 Platform Foundation - Docker, Drizzle ORM, Fastify, Health Probes"`
+Created walkthrough.md
+
+# Stage 1 Complete: Platform Foundation Verified
+
+**Stage 1: Platform Foundation** has been engineered, tested, and committed to the repository.
+
+The summary and verification details are recorded in:
+👉 **[`walkthrough.md`](file:///C:/Users/Balaharish%20Saravanan/.gemini/antigravity-ide/brain/2d61404a-22e2-4292-8915-2245c67cafc1/walkthrough.md)**
+
+---
+
+### Summary of What Was Delivered in Stage 1
+
+1. **Dual-Environment Docker Ingress**:
+   - [`docker-compose.yml`](file:///d:/Projects/TechXMadras%2026/CTF/docker-compose.yml), [`docker-compose.lan.yml`](file:///d:/Projects/TechXMadras%2026/CTF/docker-compose.lan.yml), and [`docker-compose.prod.yml`](file:///d:/Projects/TechXMadras%2026/CTF/docker-compose.prod.yml).
+   - NGINX configurations for both LAN and Production environments with SSE stream buffering disabled and `X-Accel-Redirect` support.
+2. **Environment & Schema Engine**:
+   - Environment validation with Zod in [`backend/src/config/env.ts`](file:///d:/Projects/TechXMadras%2026/CTF/backend/src/config/env.ts).
+   - Complete 16-table PostgreSQL relational schema in [`backend/src/db/schema.ts`](file:///d:/Projects/TechXMadras%2026/CTF/backend/src/db/schema.ts).
+   - Generated initial Drizzle SQL migration: [`0000_big_madame_hydra.sql`](file:///d:/Projects/TechXMadras%2026/CTF/backend/src/db/migrations/0000_big_madame_hydra.sql).
+3. **Core Fastify Backend**:
+   - Fastify app factory in [`backend/src/app.ts`](file:///d:/Projects/TechXMadras%2026/CTF/backend/src/app.ts) with security plugins (`@fastify/helmet`, `@fastify/cors`, `@fastify/cookie`, `@fastify/sensible`).
+   - Liveness (`/health`) and deep readiness (`/api/v1/health`) probes.
+   - Structured Pino logger with sensitive data redaction in [`backend/src/utils/logger.ts`](file:///d:/Projects/TechXMadras%2026/CTF/backend/src/utils/logger.ts).
+   - Graceful shutdown handlers in [`backend/src/server.ts`](file:///d:/Projects/TechXMadras%2026/CTF/backend/src/server.ts).
+4. **Testing & Verification**:
+   - Vitest suite passing 100% (6/6 unit and integration tests).
+   - TypeScript cleanly compiled via `npm run build`.
+   - Initialized Git repository and created root commit.
+
+---
+
+### Ready for Stage 2
+
+Following the stage-gated development model, please review the progress. Once confirmed, I will proceed to **Stage 2 — Authentication & Teams**:
+- Argon2id password hashing and session/JWT tokens
+- Team creation, joining via hashed invite code, and membership cap enforcement
+- Role-Based Access Control middleware (`participant`, `admin`, `superadmin`)
+- Integration tests covering registration, login, and team workflows

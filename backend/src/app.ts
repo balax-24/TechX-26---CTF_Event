@@ -3,12 +3,15 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import cookie from '@fastify/cookie';
 import sensible from '@fastify/sensible';
+import jwt from '@fastify/jwt';
 import { randomUUID } from 'crypto';
 
 import { config } from './config/env.js';
 import { logger } from './utils/logger.js';
 import { checkDatabaseHealth } from './db/index.js';
 import { checkRedisHealth } from './cache/redis.js';
+import { authRoutes } from './modules/auth/auth.routes.js';
+import { teamRoutes } from './modules/teams/teams.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -48,7 +51,15 @@ export async function buildApp(): Promise<FastifyInstance> {
     hook: 'onRequest',
   });
 
-  // 5. Request Lifecycle Logging
+  // 5. JWT Authentication Engine
+  await app.register(jwt, {
+    secret: config.JWT_SECRET,
+    sign: {
+      expiresIn: config.JWT_EXPIRES_IN,
+    },
+  });
+
+  // 6. Request Lifecycle Logging
   app.addHook('onRequest', async (req) => {
     if (req.url !== '/health' && config.NODE_ENV !== 'test') {
       logger.info(
@@ -79,7 +90,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // ---------------------------------------------------------------------------
-  // 6. HEALTH PROBES
+  // 7. HEALTH PROBES
   // ---------------------------------------------------------------------------
 
   // Liveness probe (Fast check for Docker container liveness)
@@ -118,7 +129,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // ---------------------------------------------------------------------------
-  // 7. BASE API ROUTE
+  // 8. BASE API ROUTE & FEATURE MODULES
   // ---------------------------------------------------------------------------
   app.get('/api/v1', async (_req, reply) => {
     return reply.send({
@@ -130,5 +141,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
   });
 
+  // Mount Authentication & Team routes
+  await app.register(authRoutes, { prefix: '/api/v1/auth' });
+  await app.register(teamRoutes, { prefix: '/api/v1/teams' });
+
   return app;
 }
+

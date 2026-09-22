@@ -107,11 +107,13 @@ are blocked by the seccomp profile. Seccomp is never set to unconfined.
 
 ---
 
-## 4. Secret Isolation Policy
+## 4. Secret & Gateway Control Plane Isolation Policy
 
 Dynamic challenge containers never receive platform environment variables:
-- `JWT_SECRET`, `COOKIE_SECRET`, `DATABASE_URL`, `REDIS_PASSWORD`, `FLAG_SALT`, and cloud credentials are excluded from container environment configurations.
+- `JWT_SECRET`, `COOKIE_SECRET`, `DATABASE_URL`, `REDIS_PASSWORD`, `FLAG_SALT`, `CHALLENGE_GATEWAY_SECRET`, `GATEWAY_SECRET`, and cloud credentials are excluded from container environment configurations.
 - Challenges receive only explicit non-secret metadata (e.g. `CHALLENGE_INSTANCE_ID`, `CHALLENGE_PORT`) and challenge-specific allowlisted variables.
+- Gateway Control API (`/internal/*`) binds strictly to `ctf_gateway_net` (`eth0`) and loopback; no listening port is bound on challenge network interfaces (`eth1`, `eth2`).
+- A compromised challenge container cannot reach the Gateway Control API, Docker socket, or Docker TCP endpoints.
 
 ---
 

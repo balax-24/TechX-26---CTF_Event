@@ -285,14 +285,39 @@ export class MockDockerManager implements IDockerManager {
       return { allowed: false, reason: 'EHOSTUNREACH: Internal backend management port is unreachable from challenge networks (Core backend is strictly isolated on ctf_core_net)' };
     }
 
-    // 5. External WAN / Internet egress check
+    // 5. Challenge Gateway control API and internal listeners isolation check
+    if (
+      targetHost === 'challenge_gateway' ||
+      targetHost === 'techx_challenge_gateway' ||
+      (targetPort === 5000 && (targetHost.startsWith('172.') || targetHost === 'gateway'))
+    ) {
+      return {
+        allowed: false,
+        reason: 'ECONNREFUSED: Challenge Gateway control API listens strictly on ctf_gateway_net and is unreachable from challenge networks',
+      };
+    }
+
+    // 6. Docker TCP management ports check (2375 / 2376)
+    if (
+      targetPort === 2375 ||
+      targetPort === 2376 ||
+      targetHost.includes('docker') ||
+      targetHost === '127.0.0.1:2375'
+    ) {
+      return {
+        allowed: false,
+        reason: 'ECONNREFUSED: Docker daemon TCP API (2375/2376) is not exposed on any network interface',
+      };
+    }
+
+    // 7. External WAN / Internet egress check
     const isPublicIp = !targetHost.startsWith('172.') && !targetHost.startsWith('10.') && !targetHost.startsWith('192.168.') && targetHost !== '127.0.0.1' && targetHost !== 'localhost';
     const sourceNet = this.networks.get(source.config.networkName);
     if (isPublicIp && sourceNet?.internal) {
       return { allowed: false, reason: 'ENETUNREACH: Challenge network is configured as internal (no default gateway to WAN)' };
     }
 
-    // 6. Challenge-to-Challenge isolation check
+    // 8. Challenge-to-Challenge isolation check
     let targetContainer: typeof source | undefined;
     for (const c of this.containers.values()) {
       if (c.ipAddress === targetHost || c.name === targetHost) {

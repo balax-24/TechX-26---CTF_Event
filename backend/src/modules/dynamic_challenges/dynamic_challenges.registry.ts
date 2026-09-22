@@ -10,6 +10,13 @@ const FORBIDDEN_ENV_KEYS = new Set([
   'REDIS_PASSWORD',
   'FLAG_SALT',
   'FLAG_PREFIX',
+  'CHALLENGE_GATEWAY_SECRET',
+  'GATEWAY_SECRET',
+  'CHALLENGE_GATEWAY_URL',
+  'GATEWAY_URL',
+  'ADMIN_PASSWORD',
+  'DOCKER_SOCK',
+  'DOCKER_HOST',
 ]);
 
 const VALID_IMAGE_REGEX = /^[a-zA-Z0-9_.-]+(\/[a-zA-Z0-9_.-]+)*(?::[a-zA-Z0-9_.-]+)?$/;

@@ -348,3 +348,87 @@ To adhere to strict engineering integrity and avoid false verification claims:
 1. **Per-Host Container Capacity**: Limited to configured `MAX_GLOBAL_INSTANCES` (default 100). When full, teams must wait for running instances to expire or stop before launching new ones.
 2. **Cold Start Latency**: Spawning a new container and waiting for healthcheck readiness takes approximately 1–3 seconds depending on image complexity and host load.
 3. **No Dynamic Outbound Access**: By default, challenge containers on `internal: true` bridge networks cannot make external network connections. If a specific challenge requires outbound Internet access, it must be explicitly configured with custom egress routing.
+
+---
+
+## 11. Stage 8 Final Security Boundary Audit: Gateway, Listeners & Privilege Model
+
+### 11.1 Compromised Challenge Reachability Evaluation
+A fully compromised participant challenge container with arbitrary code execution inside its isolated container environment cannot reach the platform infrastructure or control plane:
+
+```text
+Compromised Challenge Container
+    |
+    +--> Gateway control API (/internal/*)  ===> BLOCKED (403 Forbidden / Connection Refused)
+    |
+    +--> Gateway health endpoint (/health)   ===> BLOCKED (403 Forbidden from challenge IP)
+    |
+    +--> Gateway metrics endpoint            ===> BLOCKED (Unexposed / Unreachable)
+    |
+    +--> Docker Unix socket                  ===> BLOCKED (Not mounted into challenge container)
+    |
+    +--> Docker TCP API (2375/2376)          ===> BLOCKED (Disabled / Connection Refused)
+    |
+    +--> Core Fastify Backend (4000)         ===> BLOCKED (No network presence on challenge net)
+    |
+    +--> PostgreSQL Database (5432)          ===> BLOCKED (Isolated on ctf_core_net)
+    |
+    +--> Redis Cache (6379)                  ===> BLOCKED (Isolated on ctf_core_net)
+    |
+    +--> Team B Challenge Container          ===> BLOCKED (Distinct per-instance bridge network)
+```
+
+### 11.2 Listener Binding Model (Trusted Management Isolation)
+The `techx_challenge_gateway` service strictly segregates management listening sockets from participant networks:
+1. **Non-Wildcard Binding**: The gateway server never binds to `0.0.0.0` across all attached interfaces.
+2. **Dynamic Interface Discovery**: At startup, `getTrustedBindHost()` inspects container network interfaces and binds exclusively to `eth0` (the IPv4 address assigned to `ctf_gateway_net` at boot time) and the container-internal loopback interface (`127.0.0.1`).
+3. **Challenge Interface Silence**: When Docker attaches secondary interfaces (`eth1`, `eth2`, etc.) for per-instance challenge networks, no HTTP or TCP listening sockets are bound to those interfaces. Any inbound TCP connection initiated from a challenge container targeting the gateway's IP on the challenge bridge is rejected at the Linux kernel level with a `TCP RST` (`ECONNREFUSED`).
+4. **Defense-in-Depth Origin Filtering**: Even if a packet reached the HTTP request handler, `createGatewayHttpServer` inspects `req.socket.remoteAddress`. If the remote IP matches an active challenge instance IP or challenge subnet, `/internal/*` and `/health` requests are rejected immediately with `403 Forbidden`.
+
+### 11.3 Docker Socket Containment & API Boundary
+1. **No Network-Exposed Docker TCP Ports**: Docker TCP ports `2375` (unencrypted) and `2376` (TLS) are not exposed or bound to any interface.
+2. **Local Unix Socket Only**: Docker Engine access is restricted exclusively to the local Unix domain socket `/var/run/docker.sock` within `techx_challenge_gateway`.
+3. **Core Backend Socket Absence**: The primary Fastify backend (`techx_ctf_backend`) does NOT mount `/var/run/docker.sock`.
+4. **Challenge Container Socket Absence**: Challenge containers (`techx-chal-*`) NEVER mount `/var/run/docker.sock`.
+5. **Zero Participant-Controlled Docker Parameters**:
+   - `image`: Strictly server-authoritative from `dynamicChallengeRegistry`.
+   - `containerName` & `networkName`: Generated server-side using UUIDs.
+   - `capabilities`: `CapDrop: ['ALL']` enforced unconditionally.
+   - `privileged`: `false` enforced unconditionally.
+   - `no-new-privileges`: Enforced unconditionally.
+   - `volumes / mounts`: No host filesystem paths mounted; bounded in-memory tmpfs only.
+   - `commands / entrypoints`: Hardcoded in challenge images or registry definitions.
+
+### 11.4 Cross-Team Proxy Attack Defense
+1. **Authoritative Routing Metadata**: Reverse proxy destinations are derived strictly from database records and the gateway's memory registry (`instance.internalIp:instance.internalPort`).
+2. **Rejection of Attacker Overrides**: Query parameters (`?target=...`, `?upstream=...`, `?ip=...`, `?port=...`) are completely ignored during destination resolution.
+3. **Header Stripping**: Client-supplied headers including `X-Target-Host`, `X-Target-IP`, `X-Target-Port`, `X-Upstream-URL`, `X-Upstream-Host`, `Host`, `X-Forwarded-Host`, and `X-Docker-Host` are stripped before proxying. The upstream `Host` header is rewritten to `${target.internalIp}:${target.internalPort}`.
+
+### 11.5 Prevention of Arbitrary Network Bridging
+1. **HTTP CONNECT Rejection**: `CONNECT` tunneling requests are rejected immediately with `405 Method Not Allowed`.
+2. **SSRF Destination Validation**: Target IPs are validated against loopback (`127.0.0.1`), link-local/cloud metadata (`169.254.169.254`), and non-registered subnets.
+3. **Instance Registry Confinement**: The gateway only proxies to instances currently registered in its active instance table.
+
+### 11.6 Gateway Secret Security & Fail-Closed Rotation
+1. **Secret Isolation**: `CHALLENGE_GATEWAY_SECRET` is passed only to `techx_ctf_backend` and `techx_challenge_gateway`. It is filtered out of challenge environment variables (`FORBIDDEN_ENV_KEYS`), excluded from challenge container configs, never returned through API summaries, and stripped from forwarded headers.
+2. **Fail-Closed Behavior**: Any control or proxy request with an invalid, missing, or mismatched gateway secret fails closed immediately with `403 Forbidden`. No fallback or permissive mode exists.
+
+### 11.7 Gateway Container Elevated Privileges Breakdown
+Because `techx_challenge_gateway` manages the Docker daemon, its privileges are documented explicitly:
+- **User**: `node` (UID 1000) from multi-stage build; requires Docker group permissions on `/var/run/docker.sock`.
+- **Privileged Status**: `Privileged: false`. Standard non-privileged container.
+- **Capabilities**: Standard unprivileged Docker capabilities (no `SYS_ADMIN`, no `NET_ADMIN`, no `SYS_PTRACE`).
+- **Filesystem**: Standard Alpine rootfs; runs compiled Node.js runtime.
+- **Writable Paths**: Limited to `/tmp` and local `/app` working directory.
+- **Network Attachments**:
+  - `ctf_gateway_net` (`internal: true`): Exclusively shared with `techx_ctf_backend`.
+  - Dynamic `techx-inst-net-*` interfaces: Dynamically attached/detached per running instance to proxy participant traffic.
+  - Never attached to `ctf_core_net`.
+- **Docker Daemon Access**: Access to local `/var/run/docker.sock` to execute container create, start, stop, remove, network create, and network connect commands.
+
+### 11.8 Architecture Decision: Combined Gateway vs Split Component
+The combined **Challenge Gateway + Infrastructure Manager** architecture is **retained and verified safe**:
+1. The control API is bound strictly to `eth0` (`ctf_gateway_net`) and is unreachable from participant challenge networks.
+2. The gateway container does not route packets between networks (`net.ipv4.ip_forward = 0`).
+3. Zero participant-controlled parameters can reach Docker management operations.
+4. Splitting the gateway into a separate proxy and manager would introduce additional network hops and synchronization complexity without adding a stronger security boundary, since the control API is already inaccessible from challenge networks.

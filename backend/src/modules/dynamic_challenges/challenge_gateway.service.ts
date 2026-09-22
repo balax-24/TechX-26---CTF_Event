@@ -26,6 +26,24 @@ export class ChallengeGatewayService {
   private activeInstances = new Map<string, InstanceCreationResult>();
   private gatewayContainerName: string | null = null;
   public allowLoopbackProxy: boolean = process.env.NODE_ENV !== 'production';
+  public trustedBindIp?: string;
+
+  /**
+   * Checks if an IP originates from a participant challenge container or challenge bridge subnet.
+   */
+  public isChallengeNetworkIp(ip?: string): boolean {
+    if (!ip) return false;
+    const cleanIp = ip.replace(/^::ffff:/, '');
+    for (const inst of this.activeInstances.values()) {
+      if (inst.internalIp === cleanIp) return true;
+      const parts = inst.internalIp.split('.');
+      if (parts.length === 4) {
+        const subnetPrefix = `${parts[0]}.${parts[1]}.${parts[2]}.`;
+        if (cleanIp.startsWith(subnetPrefix)) return true;
+      }
+    }
+    return false;
+  }
 
   constructor(dockerManager?: IDockerManager) {
     this.customDockerManager = dockerManager;
@@ -41,6 +59,9 @@ export class ChallengeGatewayService {
   }
 
   public registerInstance(instance: InstanceCreationResult): void {
+    if (instance.instanceId) {
+      this.activeInstances.set(instance.instanceId, instance);
+    }
     this.activeInstances.set(instance.containerId, instance);
     this.activeInstances.set(instance.containerName, instance);
   }
@@ -67,7 +88,33 @@ export class ChallengeGatewayService {
       await this.dockerManager.connectContainer(networkName, this.gatewayContainerName).catch(() => {});
     }
 
-    // 3. Launch hardened challenge container
+    // 3. Sanitize environment variables against sensitive platform secrets
+    const forbiddenKeys = new Set([
+      'GATEWAY_SECRET',
+      'CHALLENGE_GATEWAY_SECRET',
+      'CHALLENGE_GATEWAY_URL',
+      'GATEWAY_URL',
+      'JWT_SECRET',
+      'SESSION_SECRET',
+      'ADMIN_PASSWORD',
+      'DATABASE_URL',
+      'REDIS_URL',
+      'REDIS_PASSWORD',
+      'FLAG_SALT',
+      'FLAG_PREFIX',
+      'DOCKER_SOCK',
+      'DOCKER_HOST',
+    ]);
+    const sanitizedEnv: Record<string, string> = {};
+    if (dto.envAllowlist) {
+      for (const [k, v] of Object.entries(dto.envAllowlist)) {
+        if (!forbiddenKeys.has(k.toUpperCase())) {
+          sanitizedEnv[k] = v;
+        }
+      }
+    }
+
+    // 4. Launch hardened challenge container
     const containerResult = await this.dockerManager.createAndStartContainer({
       containerName,
       image: dto.image,
@@ -79,7 +126,7 @@ export class ChallengeGatewayService {
       readOnlyRootfs: dto.readOnlyRootfs,
       tmpfsMounts: dto.tmpfsMounts,
       env: {
-        ...(dto.envAllowlist || {}),
+        ...sanitizedEnv,
         CHALLENGE_INSTANCE_ID: dto.instanceId,
         CHALLENGE_PORT: String(dto.internalPort),
       },
@@ -250,9 +297,13 @@ export class ChallengeGatewayService {
         'transfer-encoding',
         'upgrade',
         'x-target-host',
+        'x-target-ip',
+        'x-target-port',
         'x-upstream-url',
+        'x-upstream-host',
         'x-forwarded-host',
         'x-forwarded-server',
+        'x-docker-host',
         'x-gateway-secret',
       ]);
 
@@ -328,18 +379,53 @@ export function createGatewayHttpServer(
   service: ChallengeGatewayService,
   expectedSecret: string
 ): http.Server {
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = req.url || '/';
     const method = req.method || 'GET';
 
-    // Health probe (unauthenticated for Docker container health check)
+    // 1. Prohibit arbitrary TCP/HTTP CONNECT tunneling
+    if (method === 'CONNECT') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        statusCode: 405,
+        error: 'METHOD_NOT_ALLOWED',
+        message: 'Arbitrary TCP/HTTP CONNECT tunneling is forbidden',
+      }));
+      return;
+    }
+
+    const remoteIp = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+
+    // 2. Health probe (unauthenticated for Docker container health check)
     if (url === '/health' && method === 'GET') {
+      if (service.isChallengeNetworkIp(remoteIp)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          statusCode: 403,
+          error: 'FORBIDDEN',
+          message: 'Health probe forbidden from challenge network',
+        }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', service: 'techx-challenge-gateway' }));
       return;
     }
 
-    // Require x-gateway-secret for all internal and proxy operations
+    // 3. Network origin restriction: Control API endpoints (/internal/*) MUST NEVER be reachable from participant challenge networks
+    if (url.startsWith('/internal/')) {
+      if (service.isChallengeNetworkIp(remoteIp)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          statusCode: 403,
+          error: 'FORBIDDEN',
+          message: 'Gateway control API is restricted to trusted management network',
+        }));
+        return;
+      }
+    }
+
+    // 4. Require x-gateway-secret for all internal and proxy operations
     const providedSecret = req.headers['x-gateway-secret'];
     if (!providedSecret || providedSecret !== expectedSecret) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -459,4 +545,11 @@ export function createGatewayHttpServer(
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'NOT_FOUND' }));
   });
+
+  server.on('connect', (_req, clientSocket) => {
+    clientSocket.write('HTTP/1.1 405 Method Not Allowed\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{"statusCode":405,"error":"METHOD_NOT_ALLOWED","message":"Arbitrary TCP/HTTP CONNECT tunneling is forbidden"}');
+    clientSocket.destroy();
+  });
+
+  return server;
 }

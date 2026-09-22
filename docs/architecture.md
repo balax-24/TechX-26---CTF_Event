@@ -77,6 +77,22 @@ TechX CTF 2026 is an IEEE-affiliated, production-grade Capture The Flag platform
 - **Strict Post-Commit Event Boundary**:
   Domain events are emitted via `scoringEventBus` strictly **after** database transactions commit. Rolled-back or failed transactions never emit score events.
 
+### Stage 5: Real-Time Scoreboard & Leaderboard Engine
+- **Transactional Outbox (`score_event_outbox`)**:
+  Score mutations, ledger entries, and outbox rows commit in the exact same PostgreSQL transaction. Eliminates event loss on process or broker crashes.
+- **Outbox Worker**:
+  Background worker with row claiming via `FOR UPDATE SKIP LOCKED`, bounded exponential backoff (`OUTBOX_MAX_ATTEMPTS = 5`), and instant post-commit trigger.
+- **Single Redis Subscriber Fan-Out**:
+  Dedicated Redis subscriber client on channel `techx:leaderboard:events` passing events to `SSEConnectionManager` for broadcast across hundreds of browser streams.
+- **Dead Client Pruning**:
+  Write failures on broken or disconnected sockets immediately prune dead connections without blocking or stalling healthy clients.
+- **Deterministic Ranking**:
+  $$\text{ORDER BY score DESC, last\_score\_at ASC, id ASC}$$
+- **Snapshot & Monotonic Versioning**:
+  Monotonic `leaderboardVersion` with authoritative snapshot recovery (`GET /api/v1/leaderboard`) on client reconnect.
+- **Unbuffered Reverse Proxying**:
+  NGINX configurations for LAN and Production with `proxy_buffering off; chunked_transfer_encoding off;` for low-latency streaming.
+
 ---
 
 ## 4. Database Constraints & Integrity Matrix
@@ -89,3 +105,5 @@ TechX CTF 2026 is an IEEE-affiliated, production-grade Capture The Flag platform
 | `checkpoints` | `UNIQUE(challenge_id, step_number)` | Enforces unique step numbering within a challenge |
 | `teams` | `INDEX(score, last_score_at)` | Accelerates deterministic leaderboard queries |
 | `score_events` | `INDEX(team_id, created_at)` | Accelerates score reconciliation and team audit timeline |
+| `score_event_outbox` | `UNIQUE(event_id)` | Guarantees immutable event identity across retries |
+| `score_event_outbox` | `INDEX(published_at, created_at)` | Optimizes outbox worker polling for pending unpublished events |

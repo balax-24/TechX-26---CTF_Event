@@ -19,6 +19,11 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply): Pr
     token = req.cookies.access_token;
   }
 
+  // 3. Check query param fallback (for browser EventSource connections)
+  if (!token && (req.query as any)?.token) {
+    token = (req.query as any).token;
+  }
+
   if (!token) {
     return reply.unauthorized('Authentication token missing or invalid');
   }

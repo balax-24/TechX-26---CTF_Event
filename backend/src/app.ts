@@ -16,6 +16,10 @@ import { challengeRoutes } from './modules/challenges/challenges.routes.js';
 import { categoryRoutes } from './modules/categories/categories.routes.js';
 import { submissionRoutes } from './modules/submissions/submissions.routes.js';
 import { checkpointRoutes } from './modules/checkpoints/checkpoints.routes.js';
+import { leaderboardRoutes } from './modules/leaderboard/leaderboard.routes.js';
+import { sseManager } from './modules/realtime/sse.manager.js';
+import { outboxWorker } from './modules/realtime/outbox.worker.js';
+import { redisSubscriber } from './modules/realtime/redis.subscriber.js';
 
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -153,6 +157,14 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(categoryRoutes, { prefix: '/api/v1/categories' });
   await app.register(submissionRoutes, { prefix: '/api/v1/submissions' });
   await app.register(checkpointRoutes, { prefix: '/api/v1/checkpoints' });
+  await app.register(leaderboardRoutes, { prefix: '/api/v1/leaderboard' });
+
+  // Lifecycle cleanup hook on application close
+  app.addHook('onClose', async () => {
+    sseManager.closeAll();
+    await redisSubscriber.stop();
+    outboxWorker.stop();
+  });
 
   return app;
 }

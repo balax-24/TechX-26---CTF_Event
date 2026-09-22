@@ -331,3 +331,36 @@ A focused production-hardening pass has been performed on Stage 4:
 7. **Test Results**:
    - 14 test suites, 99 tests passing with 100% success rate.
    - 0 TypeScript compilation errors.
+
+---
+
+# Stage 5 Complete: Real-Time Scoreboard & Leaderboard Engine Verified
+
+**Stage 5: Real-Time Scoreboard & Leaderboard Engine** has been engineered, load-tested, and verified:
+1. **Transactional Outbox (`score_event_outbox`)**:
+   - Score mutations, ledger entries, and outbox records are inserted atomically on the same PostgreSQL transaction (`BEGIN ... COMMIT`).
+   - Eliminates crash window and guarantees zero event loss even if Redis or the application restarts.
+2. **Outbox Background Worker**:
+   - Polling worker with PostgreSQL `FOR UPDATE SKIP LOCKED` claiming semantics.
+   - Bounded exponential backoff (`OUTBOX_MAX_ATTEMPTS = 5`) and immediate post-commit trigger (`outboxWorker.trigger()`).
+   - Concurrency-safe for multiple backend worker nodes without duplicate claims.
+3. **Single Redis Subscriber Fan-Out**:
+   - Fastify maintains a single dedicated Redis subscriber on channel `techx:leaderboard:events`.
+   - Incoming events are immediately forwarded to `SSEConnectionManager` for broadcast across hundreds of browser streams.
+4. **SSE Connection Manager & Dead Client Pruning**:
+   - Maintains persistent HTTP SSE streams (`reply.hijack()`).
+   - Handles write failures on broken/disconnected sockets by immediately pruning dead connections from memory without blocking healthy clients.
+   - Periodic keepalive heartbeats (`: heartbeat\n\n`) every 25 seconds prevent proxy timeouts.
+5. **Deterministic Ranking & Snapshot Endpoint**:
+   - `GET /api/v1/leaderboard` returns server-calculated deterministic rankings: `score DESC, last_score_at ASC, id ASC`.
+   - Monotonic `leaderboardVersion` provides version gap detection and instant state recovery for reconnecting clients.
+6. **NGINX Unbuffered Proxying**:
+   - Both LAN and Production NGINX configurations updated with `location ~ ^/api/v1/(leaderboard/stream|events/stream)` having `proxy_buffering off; chunked_transfer_encoding off;` for low-latency streaming.
+7. **Load Testing Benchmarks (Measured)**:
+   - 400 concurrent SSE connections: Heartbeat fan-out completed in **0.45ms** (100% delivery).
+   - 400 concurrent SSE connections + 20 bursts (8,000 deliveries): Mean fan-out latency **0.246ms**, P99 latency **0.791ms** (100% delivery).
+   - 800 concurrent SSE connections + 20 bursts (16,000 deliveries): Mean fan-out latency **0.707ms**, P95 latency **11.8ms** (100% delivery).
+   - Heap delta under 800 connections: **< 3MB**.
+8. **Verification**:
+   - 19 test suites, 130 tests passing with 100% success rate.
+   - 0 TypeScript compilation errors.

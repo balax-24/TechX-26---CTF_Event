@@ -311,3 +311,32 @@ export const systemConfig = pgTable('system_config', {
   valueJson: jsonb('value_json').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// -----------------------------------------------------------------------------
+// 16. SCORE EVENT OUTBOX (Transactional Outbox for Guaranteed Delivery)
+// -----------------------------------------------------------------------------
+export const scoreEventOutbox = pgTable(
+  'score_event_outbox',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    eventId: varchar('event_id', { length: 64 }).notNull().unique(),
+    eventType: varchar('event_type', { length: 30 }).notNull(), // 'final_solve', 'checkpoint_solve', 'hint_penalty', 'admin_adjustment'
+    teamId: uuid('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
+    challengeId: uuid('challenge_id').references(() => challenges.id),
+    points: integer('points').notNull(),
+    teamScore: integer('team_score').notNull(),
+    rank: integer('rank'),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    lastError: text('last_error'),
+  },
+  (table) => ({
+    outboxPubCreatedIdx: index('idx_score_event_outbox_pub_created').on(table.publishedAt, table.createdAt),
+    outboxEventIdIdx: uniqueIndex('idx_score_event_outbox_event_id').on(table.eventId),
+    outboxTeamIdx: index('idx_score_event_outbox_team_id').on(table.teamId),
+  })
+);
+

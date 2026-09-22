@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { eq, and, sql, count } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import {
@@ -10,8 +11,10 @@ import {
   submissions,
   teamHints,
   hints,
+  scoreEventOutbox,
 } from '../../db/schema.js';
 import { scoringEventBus } from './scoring.events.js';
+import { outboxWorker } from '../realtime/outbox.worker.js';
 import { logger } from '../../utils/logger.js';
 
 export interface FinalSolveResult {
@@ -154,7 +157,30 @@ export class ScoringService {
         runningTeamScore: newTeamScore,
       });
 
-      // 6. Update team current score and tie-breaking timestamp
+      // 6. Insert into transactional score_event_outbox (guarantees zero event loss across crashes)
+      const eventId = randomUUID();
+      const outboxPayload = {
+        eventId,
+        eventType: 'final_solve',
+        teamId,
+        teamName: team.name,
+        score: newTeamScore,
+        pointsDelta: pointsToAward,
+        challengeTitle: chal.title,
+        timestamp: new Date().toISOString(),
+      };
+
+      await tx.insert(scoreEventOutbox).values({
+        eventId,
+        eventType: 'final_solve',
+        teamId,
+        challengeId,
+        points: pointsToAward,
+        teamScore: newTeamScore,
+        payload: outboxPayload,
+      });
+
+      // 7. Update team current score and tie-breaking timestamp
       await tx
         .update(teams)
         .set({
@@ -164,7 +190,7 @@ export class ScoringService {
         })
         .where(eq(teams.id, teamId));
 
-      // 7. Increment challenge solve count
+      // 8. Increment challenge solve count
       await tx
         .update(challenges)
         .set({
@@ -173,7 +199,7 @@ export class ScoringService {
         })
         .where(eq(challenges.id, challengeId));
 
-      // 8. Record successful submission
+      // 9. Record successful submission
       await tx.insert(submissions).values({
         teamId,
         userId,
@@ -215,9 +241,10 @@ export class ScoringService {
       };
     });
 
-    // 9. Post-commit event emission (guaranteed to run ONLY after tx commits)
+    // 10. Post-commit event emission & immediate outbox trigger
     if (eventToEmit) {
       scoringEventBus.emitScoreEvent(eventToEmit);
+      outboxWorker.trigger();
     }
 
     return result;
@@ -392,6 +419,30 @@ export class ScoringService {
           runningTeamScore: newTeamScore,
         });
 
+        // Insert into transactional score_event_outbox
+        const eventId = randomUUID();
+        const outboxPayload = {
+          eventId,
+          eventType: 'checkpoint_solve',
+          teamId,
+          teamName: team.name,
+          score: newTeamScore,
+          pointsDelta: pointsAwarded,
+          challengeTitle: cp.title,
+          checkpointNumber: cp.stepNumber,
+          timestamp: new Date().toISOString(),
+        };
+
+        await tx.insert(scoreEventOutbox).values({
+          eventId,
+          eventType: 'checkpoint_solve',
+          teamId,
+          challengeId: cp.challengeId,
+          points: pointsAwarded,
+          teamScore: newTeamScore,
+          payload: outboxPayload,
+        });
+
         await tx
           .update(teams)
           .set({
@@ -439,9 +490,10 @@ export class ScoringService {
       };
     });
 
-    // 9. Post-commit event emission
+    // 9. Post-commit event emission & immediate outbox trigger
     if (eventToEmit) {
       scoringEventBus.emitScoreEvent(eventToEmit);
+      outboxWorker.trigger();
     }
 
     return result;
@@ -543,6 +595,28 @@ export class ScoringService {
           runningTeamScore: newTeamScore,
         });
 
+        // Insert into transactional score_event_outbox
+        const eventId = randomUUID();
+        const outboxPayload = {
+          eventId,
+          eventType: 'hint_penalty',
+          teamId,
+          teamName: team.name,
+          score: newTeamScore,
+          pointsDelta: -netDeduction,
+          timestamp: new Date().toISOString(),
+        };
+
+        await tx.insert(scoreEventOutbox).values({
+          eventId,
+          eventType: 'hint_penalty',
+          teamId,
+          challengeId: hint.challengeId,
+          points: -netDeduction,
+          teamScore: newTeamScore,
+          payload: outboxPayload,
+        });
+
         // 5. Update team score and tie-break timestamp
         await tx
           .update(teams)
@@ -572,9 +646,10 @@ export class ScoringService {
       };
     });
 
-    // 6. Post-commit event emission (only if net penalty was applied and tx committed)
+    // 6. Post-commit event emission & immediate outbox trigger
     if (eventToEmit) {
       scoringEventBus.emitScoreEvent(eventToEmit);
+      outboxWorker.trigger();
     }
 
     return result;

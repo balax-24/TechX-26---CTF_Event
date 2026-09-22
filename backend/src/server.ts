@@ -3,10 +3,18 @@ import { config } from './config/env.js';
 import { logger } from './utils/logger.js';
 import { closeDatabase } from './db/index.js';
 import { closeRedis } from './cache/redis.js';
+import { outboxWorker } from './modules/realtime/outbox.worker.js';
+import { redisSubscriber } from './modules/realtime/redis.subscriber.js';
+import { sseManager } from './modules/realtime/sse.manager.js';
 
 async function startServer() {
   try {
     const app = await buildApp();
+
+    // 1. Initialize Real-Time Outbox Worker & Redis Subscriber
+    outboxWorker.start();
+    await redisSubscriber.start();
+    sseManager.startHeartbeat();
 
     const address = await app.listen({
       port: config.APP_PORT,
@@ -30,9 +38,16 @@ async function startServer() {
         logger.warn({ signal }, 'Shutdown signal received, closing connections gracefully...');
 
         try {
+          // 1. Stop real-time engine components
+          sseManager.closeAll();
+          await redisSubscriber.stop();
+          outboxWorker.stop();
+
+          // 2. Close HTTP server
           await app.close();
           logger.info('HTTP server closed');
 
+          // 3. Close persistence pools
           await closeRedis();
           await closeDatabase();
 

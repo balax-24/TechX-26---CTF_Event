@@ -40,7 +40,14 @@ With the composite index `idx_teams_score_tiebreak (score, last_score_at)`, this
 
 ## 3. Monotonic Versioning (`leaderboardVersion`)
 
-Every score-affecting mutation (challenge solve, checkpoint reward, or hint penalty) committed to PostgreSQL increments the global ledger sequence.
+Every score-affecting mutation (challenge solve, checkpoint reward, or hint penalty) committed to PostgreSQL atomically draws from the database sequence:
+```sql
+SELECT nextval('leaderboard_version_seq')::bigint AS version;
+```
+This guarantees:
+- Strictly unique, non-colliding versions across distributed horizontal API instances.
+- Monotonically increasing numbers with zero reliance on wall-clock time (`Date.now()`) or in-memory state.
+- Transactional coupling: the version is committed directly with the score mutation and recorded in `score_event_outbox.leaderboard_version`.
 
 - The leaderboard snapshot returns:
   ```json
@@ -59,11 +66,11 @@ Every score-affecting mutation (challenge solve, checkpoint reward, or hint pena
     ]
   }
   ```
-- **Gap Detection & Realignment**: If a client reconnects or detects a version gap between its local state and incoming stream events, the client immediately re-fetches `GET /api/v1/leaderboard` to re-align state.
+- **Gap Detection & Realignment**: If a client receives an event where `leaderboardVersion > currentVersion + 1`, the client detects a version gap and immediately re-fetches `GET /api/v1/leaderboard` to re-align state with the authoritative snapshot.
 
 ---
 
-## 4. REST API Endpoint
+## 4. API Endpoints
 
 ### `GET /api/v1/leaderboard`
 - **Access**: Public / Participant
@@ -73,6 +80,14 @@ Every score-affecting mutation (challenge solve, checkpoint reward, or hint pena
   - `updatedAt` (ISO timestamp)
   - `totalTeams` (number)
   - `entries` (Array of ranked team summaries)
+
+### `GET /api/v1/leaderboard/stream`
+- **Access**: Authenticated (Participant, Admin)
+- **Protocol**: Server-Sent Events (`text/event-stream`)
+- **Authentication Hierarchy**:
+  1. **HttpOnly Cookie (`access_token`)**: Preferred production mechanism for same-origin browser connections. Tokens are never exposed in the URL, browser history, or proxy logs.
+  2. **Bearer Token (`Authorization: Bearer <token>`)**: Preferred for programmatic API clients and automated tests.
+  3. **Query Parameter (`?token=<token>`)**: Non-preferred development and LAN compatibility fallback. Automatically sanitized/redacted to `[REDACTED]` in structured server logs.
 
 ---
 

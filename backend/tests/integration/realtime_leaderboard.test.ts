@@ -71,10 +71,19 @@ describe('Stage 5 — Real-Time Scoreboard & Leaderboard Engine Integration Suit
       expect(response.statusCode).toBe(401);
     });
 
-    it('accepts authenticated requests with token query param or Bearer header', async () => {
+    it('accepts authenticated requests via preferred HttpOnly cookie or Bearer header without token in URL', async () => {
       const res = await new Promise<{ statusCode: number; headers: any; firstChunk: string }>((resolve, reject) => {
-        const req = http.get(
-          `http://127.0.0.1:${serverPort}/api/v1/leaderboard/stream?token=${participantToken}`,
+        const req = http.request(
+          {
+            hostname: '127.0.0.1',
+            port: serverPort,
+            path: '/api/v1/leaderboard/stream',
+            method: 'GET',
+            headers: {
+              Cookie: `access_token=${participantToken}`,
+              Accept: 'text/event-stream',
+            },
+          },
           (responseStream) => {
             responseStream.on('data', (chunk) => {
               resolve({
@@ -87,6 +96,7 @@ describe('Stage 5 — Real-Time Scoreboard & Leaderboard Engine Integration Suit
           }
         );
         req.on('error', reject);
+        req.end();
       });
 
       expect(res.statusCode).toBe(200);

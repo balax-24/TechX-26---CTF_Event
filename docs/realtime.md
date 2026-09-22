@@ -44,14 +44,35 @@
 | :--- | :--- | :--- | :--- |
 | **PostgreSQL** | Scores, Solves, Ledger, Outbox rows | **YES** | ACID durability; crash-proof |
 | **Outbox Worker** | Claim pending rows (`SKIP LOCKED`) & publish | NO | Bounded retries + exponential backoff |
-| **Redis** | Pub/Sub transport bus | NO | At-least-once transport; duplicate-safe |
+| **Redis** | Ephemeral realtime transport bus | NO | Ephemeral pub/sub transport (no message persistence); subscribers recover via snapshot |
 | **SSE Manager** | In-memory connection fan-out & heartbeats | NO | Prunes dead client sockets immediately |
 | **NGINX** | Reverse proxy with zero buffering | NO | Streams events directly to client sockets |
 | **Browser** | Renders server-derived leaderboard | NO | Never calculates scores or ranks |
 
 ---
 
-## 3. Transactional Outbox (`score_event_outbox`)
+## 3. Real-Time Delivery & Recovery Semantics
+
+```text
+PostgreSQL transactional outbox
+        ↓
+durable event
+        ↓
+Redis Pub/Sub
+        ↓
+ephemeral realtime transport
+        ↓
+SSE
+```
+
+- **Durable Outbox**: The PostgreSQL transactional outbox provides durable publication attempts. Events are safely committed to disk before any publication is attempted.
+- **Ephemeral Transport**: Redis Pub/Sub does not provide durable at-least-once storage. If subscribers are disconnected or restart during a broadcast, Redis drops those messages for that subscriber.
+- **Authoritative Recovery**: Realtime subscribers and SSE clients recover lost messages exclusively by fetching the authoritative PostgreSQL leaderboard snapshot (`GET /api/v1/leaderboard`), which contains the latest committed `leaderboardVersion`.
+- **Worker Crash Idempotence**: If the outbox worker successfully publishes a message to Redis but crashes before updating `published_at`, the same outbox event row will be claimed and published again on restart. Consumers (browser and SSE bridge) use `eventId` and `leaderboardVersion` to handle duplicate deliveries idempotently without duplicate score mutations or state corruption.
+
+---
+
+## 4. Transactional Outbox (`score_event_outbox`)
 
 ### Why It Exists
 In traditional architectures, publishing to a message broker (Redis/RabbitMQ) after database commit creates a crash window: if the Node process terminates between database commit and message publish, the event is permanently lost.
@@ -71,6 +92,8 @@ If the transaction rolls back, **zero** outbox events are created. If the transa
 
 ### Schema & Indexing
 ```sql
+CREATE SEQUENCE IF NOT EXISTS leaderboard_version_seq START WITH 1 INCREMENT BY 1;
+
 CREATE TABLE score_event_outbox (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_id VARCHAR(64) NOT NULL UNIQUE,
@@ -80,6 +103,7 @@ CREATE TABLE score_event_outbox (
     points INTEGER NOT NULL,
     team_score INTEGER NOT NULL,
     rank INTEGER,
+    leaderboard_version BIGINT NOT NULL,
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     published_at TIMESTAMPTZ,
@@ -90,11 +114,13 @@ CREATE TABLE score_event_outbox (
 
 CREATE INDEX idx_score_event_outbox_pub_created ON score_event_outbox (published_at, created_at);
 CREATE UNIQUE INDEX idx_score_event_outbox_event_id ON score_event_outbox (event_id);
+CREATE INDEX idx_score_event_outbox_team_id ON score_event_outbox (team_id);
+CREATE INDEX idx_score_event_outbox_version ON score_event_outbox (leaderboard_version);
 ```
 
 ---
 
-## 4. Outbox Worker Mechanics
+## 5. Outbox Worker Mechanics
 
 - **Row Claiming**:
   ```sql
@@ -113,7 +139,7 @@ CREATE UNIQUE INDEX idx_score_event_outbox_event_id ON score_event_outbox (event
 
 ---
 
-## 5. Single Redis Subscriber Fan-Out
+## 6. Single Redis Subscriber Fan-Out
 
 Rather than establishing separate Redis connections per browser stream (which would overwhelm Redis at 400–800 concurrent connections), Fastify maintains **one** dedicated Redis subscriber client for the `techx:leaderboard:events` channel.
 
@@ -121,7 +147,7 @@ Inbound events are received by `RedisSubscriber` and immediately passed to `SSEC
 
 ---
 
-## 6. SSE Connection Manager & Dead Client Protection
+## 7. SSE Connection Manager & Dead Client Protection
 
 ### Fastify Hijacking
 SSE streams are established via `reply.hijack()`, maintaining persistent TCP streams without Fastify auto-terminating the response.
@@ -137,7 +163,7 @@ Every 25 seconds, `: heartbeat\n\n` comments are sent to all connected streams t
 
 ---
 
-## 7. NGINX Ingress Configuration
+## 8. NGINX Ingress Configuration
 
 Both `docker/nginx/nginx.lan.conf` and `docker/nginx/nginx.prod.conf` configure the SSE stream with buffering explicitly disabled:
 
@@ -160,7 +186,7 @@ location ~ ^/api/v1/(leaderboard/stream|events/stream) {
 
 ---
 
-## 8. Measured Load Testing Benchmarks
+## 9. Measured Load Testing Benchmarks
 
 Measured on local test hardware using `backend/tests/load/realtime_load.test.ts`:
 

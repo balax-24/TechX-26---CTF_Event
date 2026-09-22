@@ -7,6 +7,20 @@ import {
   SSE_EVENT_LEADERBOARD_UPDATE,
 } from './realtime.constants.js';
 
+/**
+ * Dedicated Redis Pub/Sub Subscriber:
+ * Acts as an ephemeral realtime transport receiving pub/sub messages from outbox workers.
+ *
+ * REALTIME ARCHITECTURE:
+ * PostgreSQL transactional outbox
+ *         ↓ (durable event)
+ * Redis Pub/Sub
+ *         ↓ (ephemeral realtime transport)
+ * SSE
+ *
+ * NOTE: Redis Pub/Sub does not provide durable message queuing or persistent replay.
+ * Disconnected clients recover by fetching the authoritative PostgreSQL leaderboard snapshot.
+ */
 export class RedisSubscriber {
   private subscriberClient: Redis | null = null;
   private isRunning = false;

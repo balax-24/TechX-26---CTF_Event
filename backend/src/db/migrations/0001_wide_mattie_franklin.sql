@@ -1,3 +1,5 @@
+CREATE SEQUENCE IF NOT EXISTS "leaderboard_version_seq" START WITH 1 INCREMENT BY 1;
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "score_event_outbox" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"event_id" varchar(64) NOT NULL,
@@ -7,6 +9,7 @@ CREATE TABLE IF NOT EXISTS "score_event_outbox" (
 	"points" integer NOT NULL,
 	"team_score" integer NOT NULL,
 	"rank" integer,
+	"leaderboard_version" bigint NOT NULL,
 	"payload" jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"published_at" timestamp with time zone,
@@ -30,4 +33,5 @@ END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "idx_score_event_outbox_pub_created" ON "score_event_outbox" USING btree ("published_at","created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_score_event_outbox_event_id" ON "score_event_outbox" USING btree ("event_id");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "idx_score_event_outbox_team_id" ON "score_event_outbox" USING btree ("team_id");
+CREATE INDEX IF NOT EXISTS "idx_score_event_outbox_team_id" ON "score_event_outbox" USING btree ("team_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "idx_score_event_outbox_version" ON "score_event_outbox" USING btree ("leaderboard_version");

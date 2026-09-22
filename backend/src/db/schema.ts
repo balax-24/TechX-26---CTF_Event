@@ -326,6 +326,7 @@ export const scoreEventOutbox = pgTable(
     points: integer('points').notNull(),
     teamScore: integer('team_score').notNull(),
     rank: integer('rank'),
+    leaderboardVersion: bigint('leaderboard_version', { mode: 'number' }).notNull(),
     payload: jsonb('payload').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
@@ -337,6 +338,7 @@ export const scoreEventOutbox = pgTable(
     outboxPubCreatedIdx: index('idx_score_event_outbox_pub_created').on(table.publishedAt, table.createdAt),
     outboxEventIdIdx: uniqueIndex('idx_score_event_outbox_event_id').on(table.eventId),
     outboxTeamIdx: index('idx_score_event_outbox_team_id').on(table.teamId),
+    outboxVersionIdx: index('idx_score_event_outbox_version').on(table.leaderboardVersion),
   })
 );
 

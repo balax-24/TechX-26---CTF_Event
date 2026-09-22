@@ -7,7 +7,7 @@ import jwt from '@fastify/jwt';
 import { randomUUID } from 'crypto';
 
 import { config } from './config/env.js';
-import { logger } from './utils/logger.js';
+import { logger, sanitizeLogUrl } from './utils/logger.js';
 import { checkDatabaseHealth } from './db/index.js';
 import { checkRedisHealth } from './cache/redis.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -68,14 +68,14 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   });
 
-  // 6. Request Lifecycle Logging
+  // 6. Request Lifecycle Logging (with strict query credential redaction)
   app.addHook('onRequest', async (req) => {
     if (req.url !== '/health' && config.NODE_ENV !== 'test') {
       logger.info(
         {
           reqId: req.id,
           method: req.method,
-          url: req.url,
+          url: sanitizeLogUrl(req.url),
           ip: req.ip,
         },
         'Incoming request'
@@ -89,7 +89,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         {
           reqId: req.id,
           method: req.method,
-          url: req.url,
+          url: sanitizeLogUrl(req.url),
           statusCode: reply.statusCode,
           responseTimeMs: Math.round(reply.elapsedTime),
         },

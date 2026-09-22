@@ -3,23 +3,32 @@ import { AuthUser, UserRole } from '../types/auth.js';
 
 /**
  * Authentication Middleware Hook:
- * Extracts and validates JWT session token from Bearer header or HTTP-only cookie.
+ * Extracts and validates JWT session token.
+ *
+ * PREFERRED PRODUCTION PATHS:
+ * 1. Authorization: Bearer <token> (programmatic REST API clients)
+ * 2. HttpOnly Cookie: access_token (preferred production mechanism for same-origin browser SSE and Web UI)
+ *
+ * NON-PREFERRED COMPATIBILITY FALLBACK:
+ * 3. Query Param: ?token=<token> (strictly non-preferred; retained exclusively for dev/LAN tooling compatibility.
+ *    Redacted by structured logger before writing to logs or traces).
  */
 export async function authenticate(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   let token: string | undefined;
 
-  // 1. Check Authorization: Bearer header
+  // 1. Authorization: Bearer header (preferred for programmatic API clients)
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7).trim();
   }
 
-  // 2. Check HTTP-only signed cookie fallback
+  // 2. HTTP-only cookie (preferred production mechanism for same-origin browser SSE & Web UI)
   if (!token && req.cookies && req.cookies.access_token) {
     token = req.cookies.access_token;
   }
 
-  // 3. Check query param fallback (for browser EventSource connections)
+  // 3. Non-preferred dev/LAN fallback (query parameter)
+  // Strictly non-preferred in production; sanitized in structured logging.
   if (!token && (req.query as any)?.token) {
     token = (req.query as any).token;
   }

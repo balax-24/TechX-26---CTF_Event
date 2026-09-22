@@ -10,6 +10,24 @@ import {
   OUTBOX_POLL_INTERVAL_MS,
 } from './realtime.constants.js';
 
+/**
+ * Transactional Outbox Worker:
+ * Polls `score_event_outbox` for unpublished scoring events using `FOR UPDATE SKIP LOCKED`.
+ *
+ * REALTIME ARCHITECTURE:
+ * PostgreSQL transactional outbox
+ *         ↓ (durable event)
+ * Redis Pub/Sub
+ *         ↓ (ephemeral realtime transport)
+ * SSE
+ *
+ * RECOVERY & IDEMPOTENCE:
+ * - PostgreSQL provides durable publication attempts.
+ * - Redis Pub/Sub is ephemeral realtime transport (no message persistence).
+ * - Disconnected clients recover by fetching the authoritative PostgreSQL leaderboard snapshot.
+ * - If worker crashes after Redis publish but before updating `published_at`, the event will be
+ *   re-published on restart. Consumers handle duplicate event deliveries idempotently.
+ */
 export interface OutboxWorkerStats {
   publishedCount: number;
   publishFailures: number;

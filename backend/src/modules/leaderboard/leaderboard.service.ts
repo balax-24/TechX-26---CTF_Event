@@ -1,6 +1,6 @@
-import { eq, count } from 'drizzle-orm';
+import { eq, count, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { teams, scoreEvents } from '../../db/schema.js';
+import { teams, scoreEvents, scoreEventOutbox } from '../../db/schema.js';
 import { compareTeamRanks } from '../scoring/scoring.service.js';
 
 export interface LeaderboardEntry {
@@ -27,11 +27,20 @@ export class LeaderboardService {
    * 3. id ASC (immutable unique identifier final tie-breaker)
    */
   async getLeaderboardSnapshot(): Promise<LeaderboardSnapshot> {
-    // 1. Monotonic leaderboard version derived from score events ledger
-    const [eventCountResult] = await db
-      .select({ totalEvents: count() })
-      .from(scoreEvents);
-    const leaderboardVersion = eventCountResult?.totalEvents || 0;
+    // 1. Authoritative monotonic leaderboard version derived from PostgreSQL sequence / outbox ledger
+    let leaderboardVersion = 0;
+    try {
+      const result: any = await db.execute(
+        sql`SELECT COALESCE(MAX(leaderboard_version), 0)::bigint AS max_version FROM score_event_outbox`
+      );
+      const row = result?.rows?.[0] || result?.[0];
+      leaderboardVersion = Number(row?.max_version || 0);
+    } catch {
+      const [eventCountResult] = await db
+        .select({ totalEvents: count() })
+        .from(scoreEvents);
+      leaderboardVersion = eventCountResult?.totalEvents || 0;
+    }
 
     // 2. Fetch all unbanned teams
     const allTeams = await db

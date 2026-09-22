@@ -363,4 +363,37 @@ A focused production-hardening pass has been performed on Stage 4:
    - Heap delta under 800 connections: **< 3MB**.
 8. **Verification**:
    - 19 test suites, 130 tests passing with 100% success rate.
-   - 0 TypeScript compilation errors.
+   - 0 TypeScript compilation errors.
+
+---
+
+# Stage 5 Final Hardening: Security & Concurrency Review Complete
+
+**Stage 5 Final Hardening** has been executed, tested, and verified:
+1. **Production-Safe SSE Authentication & Sensitive Token Log Redaction**:
+   - Preferred production browser SSE authentication uses existing HttpOnly signed cookies (`Cookie: access_token=...`).
+   - Query string token (`?token=...`) is designated as a non-preferred development/LAN compatibility fallback only.
+   - Added `sanitizeLogUrl()` helper and registered custom Pino serializers on `url` and `req.url` in `logger.ts` and `app.ts` (`onRequest` and `onResponse` hooks).
+   - Sensitive query tokens (`?token=...`, `&token=...`, `?access_token=...`) are automatically redacted to `[REDACTED]` and never logged.
+   - Added regression test `sse_auth_and_redaction.test.ts` proving sensitive tokens never appear in structured logs.
+2. **Corrected Redis Pub/Sub Terminology & Architectural Delivery Semantics**:
+   - Updated documentation (`docs/realtime.md`, `docs/leaderboard.md`) and code comments in `redis.subscriber.ts` and `outbox.worker.ts`.
+   - Redis Pub/Sub is explicitly documented as an **ephemeral realtime transport** (no durable message persistence or replay).
+   - The PostgreSQL transactional outbox provides durable publication attempts.
+   - Disconnected clients recover missed messages through the authoritative PostgreSQL leaderboard snapshot (`GET /api/v1/leaderboard`).
+   - Worker crash after publish and before `published_at` update is documented and tolerated as idempotent re-publish.
+3. **Concurrency-Safe Monotonic `leaderboardVersion`**:
+   - Backed by PostgreSQL sequence `leaderboard_version_seq` (`SELECT nextval('leaderboard_version_seq')::bigint`).
+   - Monotonically increasing across distributed API instances with zero collision risk and zero reliance on `Date.now()`.
+   - Recorded on `score_event_outbox.leaderboard_version` during the scoring transaction.
+   - Leaderboard snapshot queries `SELECT COALESCE(MAX(leaderboard_version), 0)::bigint FROM score_event_outbox` for the authoritative version.
+   - Added `concurrency_version.test.ts` verifying 100 simultaneous score mutations across 5 simulated API instances yield 100 unique, strictly increasing versions with zero collisions.
+4. **Duplicate Event Handling, Version Gap Detection & Snapshot Convergence**:
+   - Implemented canonical `LeaderboardClient` state machine (`backend/src/modules/leaderboard/leaderboard.client.ts`).
+   - Tested worker crash duplicate publish: duplicate delivery tolerated, score mutation not doubled, no leaderboard corruption.
+   - Tested snapshot convergence: client at version 10 disconnects, versions 11–13 occur, client reconnects, obtains authoritative snapshot, and converges to PostgreSQL state.
+   - Tested version gap detection: client at version 100 receives version 103, detects version gap, immediately triggers authoritative snapshot fetch, and replaces stale state.
+5. **Verification**:
+   - 22 test suites, 138 tests passing with 100% success rate.
+   - 0 TypeScript compilation errors.
+

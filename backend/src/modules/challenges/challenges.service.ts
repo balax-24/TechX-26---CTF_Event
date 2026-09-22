@@ -340,15 +340,12 @@ export class ChallengesService {
   }
 
   /**
-   * Unlocks a hint for a team, recording the unlock in team_hints.
+   * Unlocks a hint for a team, applying score penalties atomically via the scoring engine.
    */
   async unlockHint(slug: string, hintId: string, userId: string, teamId: string) {
     const [hint] = await db
       .select({
         id: hints.id,
-        content: hints.content,
-        penaltyPoints: hints.penaltyPoints,
-        orderNumber: hints.orderNumber,
       })
       .from(hints)
       .innerJoin(challenges, eq(hints.challengeId, challenges.id))
@@ -359,36 +356,22 @@ export class ChallengesService {
       throw new Error('HINT_NOT_FOUND');
     }
 
-    // Check if already unlocked (idempotent)
-    const [existing] = await db
-      .select()
-      .from(teamHints)
-      .where(and(eq(teamHints.teamId, teamId), eq(teamHints.hintId, hintId)))
-      .limit(1);
-
-    if (existing) {
-      return {
-        hintId: hint.id,
-        content: hint.content,
-        penaltyPoints: hint.penaltyPoints,
-        alreadyUnlocked: true,
-      };
-    }
-
-    // Record team unlock
-    await db.insert(teamHints).values({
+    const { scoringService } = await import('../scoring/scoring.service.js');
+    const result = await scoringService.unlockHintWithPenalty({
       teamId,
+      userId,
       hintId,
-      unlockedByUserId: userId,
     });
 
     return {
       hintId: hint.id,
-      content: hint.content,
-      penaltyPoints: hint.penaltyPoints,
-      alreadyUnlocked: false,
+      content: result.content,
+      penaltyPoints: result.penaltyApplied,
+      alreadyUnlocked: result.alreadyUnlocked,
+      newTeamScore: result.newTeamScore,
     };
   }
+
 
   /**
    * Lists all available categories with published challenge metrics.

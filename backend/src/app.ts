@@ -14,6 +14,9 @@ import { authRoutes } from './modules/auth/auth.routes.js';
 import { teamRoutes } from './modules/teams/teams.routes.js';
 import { challengeRoutes } from './modules/challenges/challenges.routes.js';
 import { categoryRoutes } from './modules/categories/categories.routes.js';
+import { submissionRoutes } from './modules/submissions/submissions.routes.js';
+import { checkpointRoutes } from './modules/checkpoints/checkpoints.routes.js';
+
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -148,8 +151,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
   await app.register(challengeRoutes, { prefix: '/api/v1/challenges' });
   await app.register(categoryRoutes, { prefix: '/api/v1/categories' });
+  await app.register(submissionRoutes, { prefix: '/api/v1/submissions' });
+  await app.register(checkpointRoutes, { prefix: '/api/v1/checkpoints' });
 
   return app;
 }
+
 
 

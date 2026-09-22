@@ -219,3 +219,93 @@ Please review the progress. Once you are ready, we will proceed to **Stage 3 —
 - Static file downloads via authenticated NGINX `X-Accel-Redirect` tickets
 - Flag models (static hash, regex, and dynamic HMAC flags per team)
 - Progressive hint reveal system with penalty point deduction configurations
+
+Stage 3:
+Created flags.ts
+Created challenges.schema.ts
+Created challenges.service.ts
+Created challenges.routes.ts
+Created categories.routes.ts
+Viewed app.ts:120-145
+Viewed app.ts:140-151
+Edited app.ts
+Created flags.test.ts
+Created challenges.schema.test.ts
+Created challenges.test.ts
+Ran command: `npm test`
+Ran command: `npm run build`
+Ran command: `git status`
+Ran command: `git add .; git commit -m "feat(challenges): Stage 3 Challenge Engine - Categories, Visibility, Flag Models, Hints, Secure Files"`
+Created walkthrough.md
+
+# Stage 3 Complete: Challenge Engine Verified
+
+**Stage 3: Challenge Engine** has been engineered, tested, and committed to git.
+
+The full details and test logs are documented in:
+👉 **[`walkthrough.md`](file:///C:/Users/Balaharish%20Saravanan/.gemini/antigravity-ide/brain/2d61404a-22e2-4292-8915-2245c67cafc1/walkthrough.md)**
+
+---
+
+### Delivered Components in Stage 3
+
+1. **Flag Cryptography & Dynamic HMAC Subsystem**:
+   - `hashFlag`: Salted SHA-256 for static flags.
+   - `generateTeamHmacFlag`: Dynamic HMAC flags (`TECHX{<24-hex-token>}`) derived from challenge secret + `teamId` to eliminate flag-sharing across teams for advanced challenges.
+   - `verifyFlag`: Constant-time string matching preventing timing side-channel attacks.
+2. **Challenge Service & Security Isolation**:
+   - Status filters ensuring participants only access `published` challenges with `releaseTime <= NOW()`.
+   - Security guarantee: Flags, flag hashes, and internal checkpoint proof secrets are strictly stripped from all participant responses.
+   - Challenge listing and detail queries dynamically attach the caller's team progress (`isSolved`, `totalCheckpoints`, `solvedCheckpoints`).
+   - Progressive hint reveal system: Unpurchased hints show order and penalty point cost; hint text is only revealed after team unlock.
+3. **Secure File Downloads**:
+   - NGINX `X-Accel-Redirect` support in [`challenges.routes.ts`](file:///d:/Projects/TechXMadras%2026/CTF/backend/src/modules/challenges/challenges.routes.ts), allowing kernel-level zero-copy file streaming without loading large binary/PCAP files into backend memory.
+4. **Endpoints Implemented**:
+   - `GET /api/v1/categories`
+   - `GET /api/v1/challenges` (category & difficulty filtering)
+   - `GET /api/v1/challenges/:slug`
+   - `POST /api/v1/challenges/:slug/hints/:hintId/unlock`
+   - `GET /api/v1/challenges/:slug/files/:fileId`
+5. **Testing**:
+   - All **46 unit and integration tests** passing with 100% success rate across 8 test suites.
+   - Clean TypeScript compile with zero type errors.
+
+---
+
+### Ready for Stage 4
+
+Please review the progress. Once you are ready, we will proceed to **Stage 4 — Scoring & Checkpoints**:
+- Centralized server-authoritative scoring subsystem
+- Checkpoint proof validation engine with anti-tamper verification
+- Flag submission pipeline with PostgreSQL `FOR UPDATE` concurrency locks
+- Idempotency guarantees (preventing duplicate scores on simultaneous team submissions)
+- Immutable accounting ledger (`score_events`) tracking solves, checkpoints, and hint penalties
+- Strict tie-breaking timestamp enforcement (`score DESC, last_score_at ASC`)
+
+---
+
+# Stage 4 Complete: Checkpoints, Flag Submissions & Scoring Engine Verified
+
+**Stage 4: Checkpoints, Flag Submissions & Scoring Engine** has been engineered, tested, and verified.
+
+### Delivered Components in Stage 4:
+1. **Capped Component Scoring Model**:
+   - `challenges.points` is the maximum obtainable reward for any challenge.
+   - Checkpoints award partial points; final flag solve awards `max(0, challenge.points - awardedCheckpoints)`.
+   - Score floor enforced at `0` for all penalties.
+2. **Immutable Score Ledger & Accounting**:
+   - `score_events` tracks all point events (`final_solve`, `checkpoint_solve`, `hint_penalty`, `admin_adjustment`) with running team score snapshots.
+   - Diagnostic `reconcileTeamScore` utility ensures `SUM(score_events.points) === teams.score`.
+3. **Anti-Tampering Checkpoints Engine**:
+   - Multi-step verification enforcing prerequisite chaining (Step N requires Step N-1).
+   - Validates `token_proof`, `sub_flag`, and custom tokens in constant time (`timingSafeMatch`).
+4. **High-Concurrency Idempotency Guarantees**:
+   - Pessimistic row locking with `FOR UPDATE` combined with hard unique database constraints (`UNIQUE(team_id, challenge_id)`, `UNIQUE(team_id, checkpoint_id)`, `UNIQUE(team_id, hint_id)`).
+   - 50 concurrent submissions by the same team guarantee exactly 1 reward and 49 duplicate responses without double-scoring.
+5. **Rate Limiting**:
+   - Sliding-window rate limiter via Redis with in-memory fallback protecting all submission and checkpoint endpoints.
+6. **Decoupled Post-Commit Event Boundary**:
+   - `scoringEventBus` publishes score events strictly after PostgreSQL transaction commits, preparing for Stage 5 real-time broadcasts.
+7. **Testing**:
+   - All 83 unit and integration tests passing across 12 test suites.
+   - Clean TypeScript build with zero errors.

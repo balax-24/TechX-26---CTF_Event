@@ -1,4 +1,4 @@
-import { eq, count, sql } from 'drizzle-orm';
+import { eq, count, sql, desc, asc } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { teams, scoreEvents, scoreEventOutbox } from '../../db/schema.js';
 import { compareTeamRanks } from '../scoring/scoring.service.js';
@@ -42,7 +42,7 @@ export class LeaderboardService {
       leaderboardVersion = eventCountResult?.totalEvents || 0;
     }
 
-    // 2. Fetch all unbanned teams
+    // 2. Fetch all unbanned teams ordered by the canonical tie-breaker matching idx_teams_score_tiebreak
     const allTeams = await db
       .select({
         id: teams.id,
@@ -51,9 +51,10 @@ export class LeaderboardService {
         lastScoreAt: teams.lastScoreAt,
       })
       .from(teams)
-      .where(eq(teams.isBanned, false));
+      .where(eq(teams.isBanned, false))
+      .orderBy(desc(teams.score), asc(teams.lastScoreAt), asc(teams.id));
 
-    // 3. Sort teams deterministically using canonical tie-breaker
+    // 3. Sort teams deterministically using canonical tie-breaker as guaranteed safety contract
     allTeams.sort((a, b) => compareTeamRanks(a, b));
 
     // 4. Map to public-safe leaderboard entries with 1-based ranks

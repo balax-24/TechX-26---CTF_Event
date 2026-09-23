@@ -39,6 +39,7 @@ export class OutboxWorker {
   private timer: NodeJS.Timeout | null = null;
   private isProcessing = false;
   private isRunning = false;
+  private pendingTrigger = false;
   private stats: OutboxWorkerStats = {
     publishedCount: 0,
     publishFailures: 0,
@@ -61,6 +62,7 @@ export class OutboxWorker {
    */
   stop(): void {
     this.isRunning = false;
+    this.pendingTrigger = false;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -78,7 +80,11 @@ export class OutboxWorker {
    * Immediate trigger invoked post-commit to deliver events without waiting for poll interval.
    */
   trigger(): void {
-    if (!this.isRunning || this.isProcessing) return;
+    if (!this.isRunning) return;
+    if (this.isProcessing) {
+      this.pendingTrigger = true;
+      return;
+    }
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -221,11 +227,24 @@ export class OutboxWorker {
             .where(eq(scoreEventOutbox.id, row.id));
         }
       }
+
+      // If we hit the batch limit, there may be more rows waiting immediately
+      if (claimedRows.length === OUTBOX_BATCH_SIZE && this.isRunning) {
+        this.pendingTrigger = true;
+      }
     } catch (err: any) {
       // Catch DB failure or general batch processing error
       logger.error({ err: err.message }, 'Failed to process outbox batch');
     } finally {
       this.isProcessing = false;
+      if (this.pendingTrigger && this.isRunning) {
+        this.pendingTrigger = false;
+        setImmediate(() => {
+          this.processOutboxBatch().catch((err) => {
+            logger.error({ err: err.message }, 'Failed to process chained outbox batch');
+          });
+        });
+      }
     }
 
     return processedCount;

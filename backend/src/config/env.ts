@@ -32,8 +32,8 @@ const envSchema = z.object({
   DB_USER: z.string().default('techx_ctf_user'),
   DB_PASSWORD: z.string().default('techx_ctf_secure_password_2026'),
   DB_NAME: z.string().default('techx_ctf_db'),
-  DB_POOL_MIN: z.coerce.number().default(2),
-  DB_POOL_MAX: z.coerce.number().default(30),
+  DB_POOL_MIN: z.coerce.number().default(5),
+  DB_POOL_MAX: z.coerce.number().default(25),
 
   REDIS_URL: z.string().default('redis://:techx_redis_secure_password_2026@localhost:6379/0'),
   REDIS_HOST: z.string().default('localhost'),

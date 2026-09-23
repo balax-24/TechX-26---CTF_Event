@@ -10,6 +10,7 @@ import {
   getDockerManager,
 } from './docker.manager.js';
 import { logger } from '../../utils/logger.js';
+import { timingSafeMatch } from '../../utils/crypto.js';
 
 /**
  * Dedicated Challenge Gateway & Infrastructure Service.
@@ -425,9 +426,11 @@ export function createGatewayHttpServer(
       }
     }
 
-    // 4. Require x-gateway-secret for all internal and proxy operations
-    const providedSecret = req.headers['x-gateway-secret'];
-    if (!providedSecret || providedSecret !== expectedSecret) {
+    // 4. Require x-gateway-secret for all internal and proxy operations (constant-time comparison)
+    const providedSecret = typeof req.headers['x-gateway-secret'] === 'string'
+      ? req.headers['x-gateway-secret']
+      : undefined;
+    if (!providedSecret || !timingSafeMatch(providedSecret, expectedSecret)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         statusCode: 403,

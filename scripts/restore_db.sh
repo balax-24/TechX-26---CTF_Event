@@ -72,10 +72,18 @@ echo "[+] Streaming SQL dump into PostgreSQL..."
 # Decompress and pipe directly into psql
 gunzip -c "${BACKUP_FILE}" | docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1
 
-echo "[+] Verifying restored schema..."
+echo "[+] Verifying restored schema and core tables..."
 TABLE_COUNT=$(docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER}" -d "${DB_NAME}" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")
+CORE_TABLES=$(docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER}" -d "${DB_NAME}" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users', 'teams', 'challenges', 'submissions', 'score_ledger');")
+
+CORE_COUNT=$(echo "${CORE_TABLES}" | tr -d ' ')
+if [ "${CORE_COUNT}" -lt 5 ]; then
+  echo "[-] WARNING: Restored database is missing essential CTF core tables (found ${CORE_COUNT}/5)!"
+  exit 1
+fi
 
 echo "[✓] Database restoration completed successfully!"
 echo "[✓] Public tables detected post-restore: $(echo "${TABLE_COUNT}" | tr -d ' ')"
+echo "[✓] Core CTF tables validated: ${CORE_COUNT}/5 (users, teams, challenges, submissions, score_ledger)"
 echo "[i] Restart the backend container to reload caches: 'docker compose restart backend'"
 echo "======================================================================"

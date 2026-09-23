@@ -60,10 +60,12 @@ services:
       --appendonly yes
       --maxmemory 512mb
       --maxmemory-policy volatile-lru
+    environment:
+      - REDISCLI_AUTH=${REDIS_PASSWORD:-techx_redis_secure_password_2026}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-techx_redis_secure_password_2026}", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -140,6 +142,8 @@ services:
     restart: unless-stopped
     security_opt:
       - "no-new-privileges:true"
+    group_add:
+      - "${DOCKER_GID:-999}"
     command: ["node", "dist/modules/dynamic_challenges/gateway_server.js"]
     environment:
       - NODE_ENV=${NODE_ENV:-production}

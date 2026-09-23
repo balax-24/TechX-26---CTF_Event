@@ -58,5 +58,15 @@ fi
 FILE_SIZE=$(du -h "${BACKUP_FILE}" | cut -f1)
 echo "[✓] Backup completed and verified successfully!"
 echo "[✓] Backup file size: ${FILE_SIZE}"
+
+# Enforce backup retention quota to prevent unlimited disk consumption
+MAX_BACKUPS="${MAX_BACKUPS:-20}"
+BACKUP_COUNT=$(ls -1 "${BACKUP_DIR}"/techx_ctf_backup_*.sql.gz 2>/dev/null | wc -l || echo 0)
+if [ "${BACKUP_COUNT}" -gt "${MAX_BACKUPS}" ]; then
+  EXCESS=$((BACKUP_COUNT - MAX_BACKUPS))
+  echo "[+] Enforcing retention policy: pruning ${EXCESS} oldest backup(s) (max: ${MAX_BACKUPS})..."
+  ls -1t "${BACKUP_DIR}"/techx_ctf_backup_*.sql.gz | tail -n "${EXCESS}" | xargs rm -f
+fi
+
 echo "[i] CRITICAL: Copy this backup to an external drive or offline storage before the event."
 echo "======================================================================"

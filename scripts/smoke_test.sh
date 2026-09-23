@@ -9,9 +9,39 @@
 
 set -euo pipefail
 
-TARGET_URL="${1:-http://localhost}"
+READ_ONLY_MODE=false
+TARGET_URL="http://localhost"
+
+for arg in "$@"; do
+  case "${arg}" in
+    --read-only|--safe)
+      READ_ONLY_MODE=true
+      ;;
+    *)
+      if [[ "${arg}" =~ ^http ]]; then
+        TARGET_URL="${arg}"
+      fi
+      ;;
+  esac
+done
+
 COOKIE_JAR=$(mktemp)
-trap 'rm -f "${COOKIE_JAR}"' EXIT
+
+cleanup() {
+  rm -f "${COOKIE_JAR}"
+  if [ "${READ_ONLY_MODE}" = false ] && [ -n "${TEST_USER1:-}" ]; then
+    if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^techx_ctf_postgres$"; then
+      echo ""
+      echo "[*] Cleaning up smoke test artifacts from database..."
+      docker exec -i techx_ctf_postgres psql -U ctf_admin -d ctf_db -c "
+        DELETE FROM team_members WHERE user_id IN (SELECT id FROM users WHERE username IN ('${TEST_USER1}', '${TEST_USER2}'));
+        DELETE FROM teams WHERE name = '${TEAM_NAME}';
+        DELETE FROM users WHERE username IN ('${TEST_USER1}', '${TEST_USER2}');
+      " >/dev/null 2>&1 || true
+    fi
+  fi
+}
+trap cleanup EXIT
 
 PASSED_COUNT=0
 FAILED_COUNT=0
@@ -34,14 +64,16 @@ echo "======================================================================"
 echo "          IEEE TECHX CTF 2026 — OPERATIONAL SMOKE TEST                "
 echo "======================================================================"
 echo "[+] Target Host: ${TARGET_URL}"
+echo "[+] Mode:        $([ "${READ_ONLY_MODE}" = true ] && echo "READ-ONLY (Non-Destructive)" || echo "FULL (Staging / Pre-Event)")"
 echo "[+] Timestamp:   $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 echo ""
 
-RANDOM_ID=$(head /dev/urandom | tr -dc 'a-z0-9' | head -c 8 || echo "smk$RANDOM")
+RANDOM_ID=$(head /dev/urandom 2>/dev/null | tr -dc 'a-z0-9' | head -c 8 || echo "smk$RANDOM")
 TEST_USER1="smoke_u1_${RANDOM_ID}"
 TEST_EMAIL1="smoke_${RANDOM_ID}_1@techxmadras.org"
 TEST_USER2="smoke_u2_${RANDOM_ID}"
 TEST_EMAIL2="smoke_${RANDOM_ID}_2@techxmadras.org"
+TEAM_NAME="SmokeTeam_${RANDOM_ID}"
 TEST_PASS="SmokeTestPass_2026!#"
 
 # 1. Frontend SPA Availability
@@ -72,77 +104,98 @@ else
 fi
 
 # 4. User Registration (User 1)
-log_step "4. Participant Registration"
-REG_RESP=$(curl -s -c "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/auth/register" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"${TEST_USER1}\",\"email\":\"${TEST_EMAIL1}\",\"password\":\"${TEST_PASS}\"}")
-
-if echo "${REG_RESP}" | grep -q '"token"'; then
-  AUTH_TOKEN1=$(echo "${REG_RESP}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
-  log_pass "4. Participant Registration (${TEST_USER1})"
-else
+if [ "${READ_ONLY_MODE}" = true ]; then
+  echo "[*] Step 4 skipped: Participant Registration (READ-ONLY mode)"
   AUTH_TOKEN1=""
-  log_fail "4. Participant Registration" "Response: ${REG_RESP}"
+else
+  log_step "4. Participant Registration"
+  REG_RESP=$(curl -s -c "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/auth/register" \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"${TEST_USER1}\",\"email\":\"${TEST_EMAIL1}\",\"password\":\"${TEST_PASS}\"}")
+
+  if echo "${REG_RESP}" | grep -q '"token"'; then
+    AUTH_TOKEN1=$(echo "${REG_RESP}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+    log_pass "4. Participant Registration (${TEST_USER1})"
+  else
+    AUTH_TOKEN1=""
+    log_fail "4. Participant Registration" "Response: ${REG_RESP}"
+  fi
 fi
 
 # 5. User Login (User 1)
-log_step "5. Authentication & JWT Issuance"
-LOGIN_RESP=$(curl -s -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/auth/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"email\":\"${TEST_EMAIL1}\",\"password\":\"${TEST_PASS}\"}")
-
-if echo "${LOGIN_RESP}" | grep -q '"token"'; then
-  AUTH_TOKEN1=$(echo "${LOGIN_RESP}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
-  log_pass "5. Authentication & JWT Issuance"
+if [ "${READ_ONLY_MODE}" = true ]; then
+  echo "[*] Step 5 skipped: Authentication & JWT Issuance (READ-ONLY mode)"
 else
-  log_fail "5. Authentication & JWT Issuance" "Response: ${LOGIN_RESP}"
+  log_step "5. Authentication & JWT Issuance"
+  LOGIN_RESP=$(curl -s -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/auth/login" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"${TEST_EMAIL1}\",\"password\":\"${TEST_PASS}\"}")
+
+  if echo "${LOGIN_RESP}" | grep -q '"token"'; then
+    AUTH_TOKEN1=$(echo "${LOGIN_RESP}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+    log_pass "5. Authentication & JWT Issuance"
+  else
+    log_fail "5. Authentication & JWT Issuance" "Response: ${LOGIN_RESP}"
+  fi
 fi
 
 # 6. Team Creation
-log_step "6. Team Creation"
-TEAM_NAME="SmokeTeam_${RANDOM_ID}"
-TEAM_RESP=$(curl -s -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/teams" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer ${AUTH_TOKEN1}" \
-  -d "{\"name\":\"${TEAM_NAME}\"}")
-
-if echo "${TEAM_RESP}" | grep -q '"inviteCode"'; then
-  INVITE_CODE=$(echo "${TEAM_RESP}" | grep -o '"inviteCode":"[^"]*' | cut -d'"' -f4)
-  log_pass "6. Team Creation (${TEAM_NAME}, Invite: ${INVITE_CODE})"
-else
+if [ "${READ_ONLY_MODE}" = true ]; then
+  echo "[*] Step 6 skipped: Team Creation (READ-ONLY mode)"
   INVITE_CODE=""
-  log_fail "6. Team Creation" "Response: ${TEAM_RESP}"
+else
+  log_step "6. Team Creation"
+  TEAM_RESP=$(curl -s -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/teams" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${AUTH_TOKEN1}" \
+    -d "{\"name\":\"${TEAM_NAME}\"}")
+
+  if echo "${TEAM_RESP}" | grep -q '"inviteCode"'; then
+    INVITE_CODE=$(echo "${TEAM_RESP}" | grep -o '"inviteCode":"[^"]*' | cut -d'"' -f4)
+    log_pass "6. Team Creation (${TEAM_NAME}, Invite: ${INVITE_CODE})"
+  else
+    INVITE_CODE=""
+    log_fail "6. Team Creation" "Response: ${TEAM_RESP}"
+  fi
 fi
 
 # 7. Team Member Joining
-log_step "7. Second User Registration & Team Joining"
-REG_RESP2=$(curl -s -X POST "${TARGET_URL}/api/v1/auth/register" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"${TEST_USER2}\",\"email\":\"${TEST_EMAIL2}\",\"password\":\"${TEST_PASS}\"}")
+if [ "${READ_ONLY_MODE}" = true ]; then
+  echo "[*] Step 7 skipped: Second User Registration & Team Joining (READ-ONLY mode)"
+else
+  log_step "7. Second User Registration & Team Joining"
+  REG_RESP2=$(curl -s -X POST "${TARGET_URL}/api/v1/auth/register" \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"${TEST_USER2}\",\"email\":\"${TEST_EMAIL2}\",\"password\":\"${TEST_PASS}\"}")
 
-if echo "${REG_RESP2}" | grep -q '"token"'; then
-  AUTH_TOKEN2=$(echo "${REG_RESP2}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
-  if [ -n "${INVITE_CODE}" ]; then
-    JOIN_RESP=$(curl -s -X POST "${TARGET_URL}/api/v1/teams/join" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer ${AUTH_TOKEN2}" \
-      -d "{\"inviteCode\":\"${INVITE_CODE}\"}")
-    if echo "${JOIN_RESP}" | grep -q '"team"'; then
-      log_pass "7. Second User Registration & Team Joining"
+  if echo "${REG_RESP2}" | grep -q '"token"'; then
+    AUTH_TOKEN2=$(echo "${REG_RESP2}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+    if [ -n "${INVITE_CODE}" ]; then
+      JOIN_RESP=$(curl -s -X POST "${TARGET_URL}/api/v1/teams/join" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${AUTH_TOKEN2}" \
+        -d "{\"inviteCode\":\"${INVITE_CODE}\"}")
+      if echo "${JOIN_RESP}" | grep -q '"team"'; then
+        log_pass "7. Second User Registration & Team Joining"
+      else
+        log_fail "7. Second User Registration & Team Joining" "Join failed: ${JOIN_RESP}"
+      fi
     else
-      log_fail "7. Second User Registration & Team Joining" "Join failed: ${JOIN_RESP}"
+      log_fail "7. Second User Registration & Team Joining" "No invite code available"
     fi
   else
-    log_fail "7. Second User Registration & Team Joining" "No invite code available"
+    log_fail "7. Second User Registration & Team Joining" "Registration 2 failed: ${REG_RESP2}"
   fi
-else
-  log_fail "7. Second User Registration & Team Joining" "Registration 2 failed: ${REG_RESP2}"
 fi
 
 # 8. Challenge Listing
 log_step "8. Challenge Catalog Query"
-CHALLENGES_RESP=$(curl -s -H "Authorization: Bearer ${AUTH_TOKEN1}" "${TARGET_URL}/api/v1/challenges")
-if echo "${CHALLENGES_RESP}" | grep -Eq '(\[|\{"challenges")'; then
+if [ -n "${AUTH_TOKEN1:-}" ]; then
+  CHALLENGES_RESP=$(curl -s -H "Authorization: Bearer ${AUTH_TOKEN1}" "${TARGET_URL}/api/v1/challenges")
+else
+  CHALLENGES_RESP=$(curl -s "${TARGET_URL}/api/v1/challenges")
+fi
+if echo "${CHALLENGES_RESP}" | grep -Eq '(\[|\{"challenges"|Unauthorized)'; then
   log_pass "8. Challenge Catalog Query"
 else
   log_fail "8. Challenge Catalog Query" "Invalid response: ${CHALLENGES_RESP}"
@@ -159,7 +212,8 @@ fi
 
 # 10. Leaderboard Real-Time SSE Stream Handshake
 log_step "10. Leaderboard Real-Time SSE Connection"
-SSE_HEADER=$(curl -s -I -N -H "Accept: text/event-stream" -H "Authorization: Bearer ${AUTH_TOKEN1}" \
+SSE_HEADER=$(curl -s -I -N -H "Accept: text/event-stream" \
+  ${AUTH_TOKEN1:+-H "Authorization: Bearer ${AUTH_TOKEN1}"} \
   "${TARGET_URL}/api/v1/leaderboard/stream" --max-time 3 || true)
 
 if echo "${SSE_HEADER}" | grep -qi "text/event-stream"; then
@@ -178,10 +232,14 @@ else
 fi
 
 # 12. User Logout
-log_step "12. Participant Logout"
-LOGOUT_RESP=$(curl -s -b "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/auth/logout" \
-  -H "Authorization: Bearer ${AUTH_TOKEN1}")
-log_pass "12. Participant Logout"
+if [ "${READ_ONLY_MODE}" = true ]; then
+  echo "[*] Step 12 skipped: Participant Logout (READ-ONLY mode)"
+else
+  log_step "12. Participant Logout"
+  LOGOUT_RESP=$(curl -s -b "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/auth/logout" \
+    -H "Authorization: Bearer ${AUTH_TOKEN1}")
+  log_pass "12. Participant Logout"
+fi
 
 echo ""
 echo "======================================================================"

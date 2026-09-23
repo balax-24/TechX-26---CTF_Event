@@ -190,6 +190,19 @@ export class SSEConnectionManager {
   }
 
   /**
+   * Returns active connection count for a specific user ID to prevent socket exhaustion.
+   */
+  getUserConnectionCount(userId: string): number {
+    let count = 0;
+    for (const client of this.clients.values()) {
+      if (client.userId === userId) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
    * Returns manager metrics for observability.
    */
   getMetrics(): SSEManagerMetrics {
@@ -210,4 +223,5 @@ export class SSEConnectionManager {
   }
 }
 
+export const MAX_SSE_CONNECTIONS_PER_USER = 5;
 export const sseManager = new SSEConnectionManager();

@@ -31,20 +31,37 @@ export async function buildApp(): Promise<FastifyInstance> {
     logger: false, // We use our structured pino logger explicitly
     genReqId: () => randomUUID(),
     trustProxy: true,
+    bodyLimit: 1048576, // 1MB global body limit
     disableRequestLogging: config.NODE_ENV === 'test',
   });
 
   // 1. Sensible HTTP Errors
   await app.register(sensible);
 
-  // 2. Helmet Security Headers
+  // 2. CORS Configuration
+  const allowedOrigins = config.CORS_ORIGIN.split(',').map((origin) => origin.trim());
+
+  // 3. Helmet Security Headers with Production CSP
   await app.register(helmet, {
-    contentSecurityPolicy: config.NODE_ENV === 'production',
+    contentSecurityPolicy: config.NODE_ENV === 'production' ? {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        connectSrc: ["'self'", ...allowedOrigins.filter((o) => o !== '*')],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+      },
+    } : false,
     crossOriginEmbedderPolicy: false,
+    xssFilter: true,
+    noSniff: true,
+    hidePoweredBy: true,
+    frameguard: { action: 'deny' },
   });
 
-  // 3. CORS Configuration
-  const allowedOrigins = config.CORS_ORIGIN.split(',').map((origin) => origin.trim());
   await app.register(cors, {
     origin: (origin, cb) => {
       // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
@@ -58,8 +75,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
-  // Handle CORS and Origin Rejection cleanly with 403 ORIGIN_NOT_ALLOWED
-  app.setErrorHandler((error, _request, reply) => {
+  // Handle CORS, Origin Rejection, and Sanitize Internal 500 Errors
+  app.setErrorHandler((error, request, reply) => {
     if (error.message === 'CORS Not Allowed') {
       return reply.status(403).send({
         statusCode: 403,
@@ -67,7 +84,36 @@ export async function buildApp(): Promise<FastifyInstance> {
         message: 'Cross-origin request not permitted',
       });
     }
-    reply.send(error);
+
+    // 4xx client errors are sent with domain error messages
+    const statusCode = error.statusCode || 500;
+    if (statusCode < 500) {
+      return reply.send(error);
+    }
+
+    // 5xx internal errors: log diagnostic server-side, never leak DB details or stack traces to client
+    logger.error(
+      {
+        err: error.message,
+        stack: error.stack,
+        reqId: request.id,
+        url: sanitizeLogUrl(request.url),
+      },
+      'Internal Server Error caught by boundary'
+    );
+
+    const isExplicitHttpError = Boolean(error.statusCode && (error.name === 'InternalServerError' || (error as any).expose));
+    const isSensitive = /database|postgres|pg_|select\s+|insert\s+|update\s+|delete\s+|password|secret|syntaxerror|typeerror|uncaught|enotfound|econnrefused/i.test(error.message || '');
+
+    const safeMessage = isExplicitHttpError && !isSensitive && error.message
+      ? error.message
+      : 'An unexpected internal error occurred';
+
+    return reply.status(500).send({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: safeMessage,
+    });
   });
 
   // 4. Secure Cookie Signing

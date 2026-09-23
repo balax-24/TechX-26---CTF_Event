@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { randomUUID } from 'crypto';
 import { leaderboardService } from './leaderboard.service.js';
-import { sseManager } from '../realtime/sse.manager.js';
+import { sseManager, MAX_SSE_CONNECTIONS_PER_USER } from '../realtime/sse.manager.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import {
   SSE_EVENT_LEADERBOARD_SNAPSHOT,
@@ -27,6 +27,15 @@ export const leaderboardRoutes: FastifyPluginAsync = async (app: FastifyInstance
       preHandler: [authenticate],
     },
     async (req, reply) => {
+      // 0. Enforce concurrent active SSE connection limit per user account
+      if (sseManager.getUserConnectionCount(req.user.id) >= MAX_SSE_CONNECTIONS_PER_USER) {
+        return reply.status(429).send({
+          statusCode: 429,
+          error: 'TOO_MANY_REQUESTS',
+          message: 'Active SSE stream connection limit reached for this account',
+        });
+      }
+
       // 1. Hijack response to maintain persistent SSE stream without Fastify auto-termination
       reply.hijack();
       const rawRes = reply.raw;

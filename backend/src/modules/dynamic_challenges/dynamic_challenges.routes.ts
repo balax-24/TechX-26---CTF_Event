@@ -3,6 +3,8 @@ import { dynamicChallengesService } from './dynamic_challenges.service.js';
 import { getChallengeGatewayClient } from './challenge_gateway.client.js';
 import { challengeInstanceParamsSchema } from './dynamic_challenges.schema.js';
 import { authenticate, requireTeam } from '../../middleware/auth.middleware.js';
+import { csrfProtection } from '../../middleware/csrf.middleware.js';
+import { checkRateLimit } from '../../utils/rate_limiter.js';
 import * as http from 'http';
 
 export const dynamicChallengeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
@@ -11,11 +13,17 @@ export const dynamicChallengeRoutes: FastifyPluginAsync = async (app: FastifyIns
   // ---------------------------------------------------------------------------
   app.post(
     '/:slug/instance',
-    { preHandler: [authenticate, requireTeam] },
+    { preHandler: [authenticate, requireTeam, csrfProtection] },
     async (req, reply) => {
       const parseResult = challengeInstanceParamsSchema.safeParse(req.params);
       if (!parseResult.success) {
         return reply.badRequest(parseResult.error.errors[0].message);
+      }
+
+      // Rate limit: 5 instance lifecycle operations per 30 seconds per team
+      const rateLimit = await checkRateLimit(`inst_lifecycle:${req.user!.teamId}`, 5, 30000);
+      if (!rateLimit.allowed) {
+        return reply.tooManyRequests('Instance lifecycle rate limit exceeded. Please wait a moment.');
       }
 
       const isAdmin = req.user?.role === 'admin' || req.user?.role === 'superadmin';
@@ -72,7 +80,7 @@ export const dynamicChallengeRoutes: FastifyPluginAsync = async (app: FastifyIns
   // ---------------------------------------------------------------------------
   app.delete(
     '/:slug/instance',
-    { preHandler: [authenticate, requireTeam] },
+    { preHandler: [authenticate, requireTeam, csrfProtection] },
     async (req, reply) => {
       const parseResult = challengeInstanceParamsSchema.safeParse(req.params);
       if (!parseResult.success) {
@@ -102,11 +110,17 @@ export const dynamicChallengeRoutes: FastifyPluginAsync = async (app: FastifyIns
   // ---------------------------------------------------------------------------
   app.post(
     '/:slug/instance/reset',
-    { preHandler: [authenticate, requireTeam] },
+    { preHandler: [authenticate, requireTeam, csrfProtection] },
     async (req, reply) => {
       const parseResult = challengeInstanceParamsSchema.safeParse(req.params);
       if (!parseResult.success) {
         return reply.badRequest(parseResult.error.errors[0].message);
+      }
+
+      // Rate limit: 5 instance lifecycle operations per 30 seconds per team
+      const rateLimit = await checkRateLimit(`inst_lifecycle:${req.user!.teamId}`, 5, 30000);
+      if (!rateLimit.allowed) {
+        return reply.tooManyRequests('Instance lifecycle rate limit exceeded. Please wait a moment.');
       }
 
       const isAdmin = req.user?.role === 'admin' || req.user?.role === 'superadmin';

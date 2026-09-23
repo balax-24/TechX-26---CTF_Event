@@ -2,56 +2,97 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { teamsService } from './teams.service.js';
 import { createTeamSchema, joinTeamSchema } from './teams.schema.js';
 import { authenticate, requireTeam } from '../../middleware/auth.middleware.js';
+import { csrfProtection } from '../../middleware/csrf.middleware.js';
+import { checkRateLimit } from '../../utils/rate_limiter.js';
+import { AuthUser } from '../../types/auth.js';
 
 export const teamRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // Helper to extract optional authenticated user from request without throwing 401
+  const getOptionalUser = (req: any): AuthUser | null => {
+    let token: string | undefined;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7).trim();
+    } else if (req.cookies && req.cookies.access_token) {
+      token = req.cookies.access_token;
+    }
+
+    if (!token) return null;
+
+    try {
+      return app.jwt.verify<AuthUser>(token);
+    } catch {
+      return null;
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // 1. CREATE TEAM
   // ---------------------------------------------------------------------------
-  app.post('/', { preHandler: [authenticate] }, async (req, reply) => {
-    const parseResult = createTeamSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      return reply.badRequest(parseResult.error.errors[0].message);
-    }
-
-    try {
-      const result = await teamsService.createTeam(req.user!.id, parseResult.data);
-
-      // Re-sign user token with updated teamId and teamRole
-      const token = app.jwt.sign({
-        id: req.user!.id,
-        username: req.user!.username,
-        email: req.user!.email,
-        role: req.user!.role,
-        teamId: result.team.id,
-        teamRole: 'captain',
-      });
-
-      return reply.status(201).send({
-        success: true,
-        team: result.team,
-        inviteCode: result.inviteCode,
-        token,
-      });
-    } catch (err: any) {
-      if (err.message === 'ALREADY_IN_TEAM') {
-        return reply.badRequest('You already belong to a team');
+  app.post(
+    '/',
+    { preHandler: [authenticate, csrfProtection], bodyLimit: 16384 },
+    async (req, reply) => {
+      // Rate limit: 5 team creations per hour per user
+      const rateLimit = await checkRateLimit(`team:create:${req.user!.id}`, 5, 3600000);
+      if (!rateLimit.allowed) {
+        return reply.tooManyRequests('Team creation rate limit exceeded. Please wait.');
       }
-      if (err.message === 'TEAM_NAME_EXISTS') {
-        return reply.conflict('A team with this name already exists');
+
+      const parseResult = createTeamSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return reply.badRequest(parseResult.error.errors[0].message);
       }
-      req.log.error({ err }, 'Create team error');
-      return reply.internalServerError('Failed to create team');
+
+      try {
+        const result = await teamsService.createTeam(req.user!.id, parseResult.data);
+
+        // Re-sign user token with updated teamId and teamRole
+        const token = app.jwt.sign({
+          id: req.user!.id,
+          username: req.user!.username,
+          email: req.user!.email,
+          role: req.user!.role,
+          teamId: result.team.id,
+          teamRole: 'captain',
+        });
+
+        return reply.status(201).send({
+          success: true,
+          team: result.team,
+          inviteCode: result.inviteCode,
+          token,
+        });
+      } catch (err: any) {
+        if (err.message === 'ALREADY_IN_TEAM') {
+          return reply.badRequest('You already belong to a team');
+        }
+        if (err.message === 'TEAM_NAME_EXISTS') {
+          return reply.conflict('A team with this name already exists');
+        }
+        req.log.error({ err }, 'Create team error');
+        return reply.internalServerError('Failed to create team');
+      }
     }
-  });
+  );
 
   // ---------------------------------------------------------------------------
   // 2. JOIN TEAM
   // ---------------------------------------------------------------------------
-  app.post('/join', { preHandler: [authenticate] }, async (req, reply) => {
-    const parseResult = joinTeamSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      return reply.badRequest(parseResult.error.errors[0].message);
-    }
+  app.post(
+    '/join',
+    { preHandler: [authenticate, csrfProtection], bodyLimit: 16384 },
+    async (req, reply) => {
+      // Rate limit: 10 join attempts per 10 minutes per user (anti-brute-force for invite codes)
+      const rateLimit = await checkRateLimit(`team:join:${req.user!.id}`, 10, 600000);
+      if (!rateLimit.allowed) {
+        return reply.tooManyRequests('Too many team join attempts. Please slow down.');
+      }
+
+      const parseResult = joinTeamSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return reply.badRequest(parseResult.error.errors[0].message);
+      }
 
     try {
       const team = await teamsService.joinTeam(req.user!.id, parseResult.data);
@@ -115,7 +156,9 @@ export const teamRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.get('/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     try {
-      const isMemberOrAdmin = req.user?.teamId === id || req.user?.role === 'admin';
+      const user = getOptionalUser(req);
+      const isMemberOrAdmin =
+        user?.teamId === id || user?.role === 'admin' || user?.role === 'superadmin';
       const team = await teamsService.getTeamDetails(id, isMemberOrAdmin);
       if (!team) {
         return reply.notFound('Team not found');
@@ -134,7 +177,10 @@ export const teamRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // ---------------------------------------------------------------------------
   // 5. LEAVE TEAM
   // ---------------------------------------------------------------------------
-  app.post('/leave', { preHandler: [authenticate, requireTeam] }, async (req, reply) => {
+  app.post(
+    '/leave',
+    { preHandler: [authenticate, requireTeam, csrfProtection] },
+    async (req, reply) => {
     try {
       const result = await teamsService.leaveTeam(req.user!.id, req.user!.teamId!);
 

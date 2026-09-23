@@ -2,13 +2,14 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { submissionsService } from './submissions.service.js';
 import { submitFlagSchema } from './submissions.schema.js';
 import { authenticate, requireTeam } from '../../middleware/auth.middleware.js';
+import { csrfProtection } from '../../middleware/csrf.middleware.js';
 import { checkRateLimit } from '../../utils/rate_limiter.js';
 import { config } from '../../config/env.js';
 
 export const submissionRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post(
     '/flag',
-    { preHandler: [authenticate, requireTeam] },
+    { preHandler: [authenticate, requireTeam, csrfProtection], bodyLimit: 16384 },
     async (req, reply) => {
       const teamId = req.user!.teamId!;
 

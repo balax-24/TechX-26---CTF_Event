@@ -44,7 +44,8 @@ describe('CSRF Defense-in-Depth Matrix', () => {
     it('rejects tampered or forged CSRF tokens', () => {
       const validToken = generateCsrfToken(admin.id);
       const [nonce, sig] = validToken.split('.');
-      const tamperedToken = `${nonce}.${sig.slice(0, -2)}aa`;
+      const alteredChar = sig.slice(-1) === 'a' ? 'b' : 'a';
+      const tamperedToken = `${nonce}.${sig.slice(0, -1)}${alteredChar}`;
 
       expect(verifyCsrfToken(tamperedToken, admin.id)).toBe(false);
       expect(verifyCsrfToken('malformed_token', admin.id)).toBe(false);

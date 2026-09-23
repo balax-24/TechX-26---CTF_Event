@@ -5,12 +5,13 @@ import {
   validateCheckpointBodySchema,
 } from './checkpoints.schema.js';
 import { authenticate, requireTeam } from '../../middleware/auth.middleware.js';
+import { csrfProtection } from '../../middleware/csrf.middleware.js';
 import { checkRateLimit } from '../../utils/rate_limiter.js';
 
 export const checkpointRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post(
     '/:checkpointId/validate',
-    { preHandler: [authenticate, requireTeam] },
+    { preHandler: [authenticate, requireTeam, csrfProtection], bodyLimit: 16384 },
     async (req, reply) => {
       const teamId = req.user!.teamId!;
 

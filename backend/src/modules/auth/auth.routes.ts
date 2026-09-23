@@ -3,13 +3,20 @@ import { authService } from './auth.service.js';
 import { registerSchema, loginSchema } from './auth.schema.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { generateCsrfToken } from '../../middleware/csrf.middleware.js';
+import { checkRateLimit } from '../../utils/rate_limiter.js';
 import { config } from '../../config/env.js';
 
 export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // ---------------------------------------------------------------------------
   // 1. REGISTER
   // ---------------------------------------------------------------------------
-  app.post('/register', async (req, reply) => {
+  app.post('/register', { bodyLimit: 16384 }, async (req, reply) => {
+    // Rate limit: 5 registrations per minute per IP
+    const rateLimit = await checkRateLimit(`auth:register:${req.ip}`, 5, 60000);
+    if (!rateLimit.allowed) {
+      return reply.tooManyRequests('Too many registration attempts. Please wait before trying again.');
+    }
+
     const parseResult = registerSchema.safeParse(req.body);
     if (!parseResult.success) {
       return reply.badRequest(parseResult.error.errors[0].message);
@@ -67,7 +74,13 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // ---------------------------------------------------------------------------
   // 2. LOGIN
   // ---------------------------------------------------------------------------
-  app.post('/login', async (req, reply) => {
+  app.post('/login', { bodyLimit: 16384 }, async (req, reply) => {
+    // Rate limit: 10 login attempts per minute per IP
+    const rateLimit = await checkRateLimit(`auth:login:${req.ip}`, 10, 60000);
+    if (!rateLimit.allowed) {
+      return reply.tooManyRequests('Too many login attempts. Please wait before trying again.');
+    }
+
     const parseResult = loginSchema.safeParse(req.body);
     if (!parseResult.success) {
       return reply.badRequest(parseResult.error.errors[0].message);

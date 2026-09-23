@@ -4,7 +4,10 @@ import { logger } from './logger.js';
 // In-memory sliding window fallback when Redis is unavailable
 interface MemoryBucket {
   timestamps: number[];
+  lastAccessed: number;
 }
+
+export const MAX_MEMORY_STORE_CAPACITY = 10000;
 const memoryStore = new Map<string, MemoryBucket>();
 
 export interface RateLimitResult {
@@ -12,6 +15,35 @@ export interface RateLimitResult {
   remaining: number;
   mode: 'redis' | 'memory_fallback';
   isFallback: boolean;
+}
+
+/**
+ * Prunes expired or cold buckets when memoryStore reaches capacity.
+ */
+function pruneMemoryStore(now: number): void {
+  // 1. Purge completely empty or expired buckets
+  for (const [key, bucket] of memoryStore.entries()) {
+    if (bucket.timestamps.length === 0 || now - bucket.lastAccessed > 300000) {
+      memoryStore.delete(key);
+    }
+  }
+
+  // 2. If still exceeding capacity, perform LRU eviction of oldest accessed buckets
+  if (memoryStore.size >= MAX_MEMORY_STORE_CAPACITY) {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+
+    for (const [key, bucket] of memoryStore.entries()) {
+      if (bucket.lastAccessed < oldestTime) {
+        oldestTime = bucket.lastAccessed;
+        oldestKey = key;
+      }
+    }
+
+    if (oldestKey) {
+      memoryStore.delete(oldestKey);
+    }
+  }
 }
 
 /**
@@ -65,14 +97,20 @@ export async function checkRateLimit(
     );
   }
 
-  // Fallback: In-memory sliding window
+  // Fallback: Bounded in-memory sliding window
+  if (memoryStore.size >= MAX_MEMORY_STORE_CAPACITY) {
+    pruneMemoryStore(now);
+  }
+
   let bucket = memoryStore.get(key);
   if (!bucket) {
-    bucket = { timestamps: [] };
+    bucket = { timestamps: [], lastAccessed: now };
     memoryStore.set(key, bucket);
   }
 
-  // Prune expired
+  bucket.lastAccessed = now;
+
+  // Prune expired timestamps
   bucket.timestamps = bucket.timestamps.filter((ts) => ts > windowStart);
   bucket.timestamps.push(now);
 
@@ -92,4 +130,11 @@ export async function checkRateLimit(
  */
 export function clearMemoryRateLimiter(): void {
   memoryStore.clear();
+}
+
+/**
+ * Diagnostic / testing helper to inspect in-memory rate limiter store size.
+ */
+export function getMemoryRateLimiterSize(): number {
+  return memoryStore.size;
 }

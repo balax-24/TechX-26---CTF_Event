@@ -437,14 +437,29 @@ export function createGatewayHttpServer(
       return;
     }
 
-    // Read body if POST/PUT/PATCH/DELETE
+    // Read body if POST/PUT/PATCH/DELETE with 1MB max body limit defense
     let bodyText = '';
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
       bodyText = await new Promise<string>((resolve) => {
         let text = '';
-        req.on('data', (c) => (text += c.toString('utf-8')));
+        let bytesRead = 0;
+        const maxBytes = 1024 * 1024; // 1MB maximum payload
+        req.on('data', (c) => {
+          bytesRead += c.length;
+          if (bytesRead > maxBytes) {
+            req.destroy();
+            if (!res.headersSent) {
+              res.writeHead(413, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ statusCode: 413, error: 'PAYLOAD_TOO_LARGE', message: 'Payload exceeds limit' }));
+            }
+            return;
+          }
+          text += c.toString('utf-8');
+        });
         req.on('end', () => resolve(text));
+        req.on('error', () => resolve(''));
       });
+      if (res.writableEnded) return;
     }
 
     // Route: POST /internal/instances

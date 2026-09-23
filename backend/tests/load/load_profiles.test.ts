@@ -29,11 +29,18 @@ function calculatePercentiles(latencies: number[]): { p50: number; p95: number; 
   return { p50, p95, p99, min, max };
 }
 
-describe('Stage 10 — Realistic Load Profiles & Performance Engineering', () => {
+function formatLatency(ms: number): string {
+  if (ms >= 1) {
+    return `${ms.toFixed(2)} ms`;
+  }
+  return `${(ms * 1000).toFixed(1)} µs (${ms.toFixed(4)} ms)`;
+}
+
+describe('Stage 10 — In-Process Concurrency & Synthetic Capacity Simulation', () => {
   // ---------------------------------------------------------------------------
-  // PROFILE A: NORMAL EVENT (200 Concurrent Participants)
+  // PROFILE A: NORMAL EVENT (200 Concurrent Participants - In-Process Synthetic)
   // ---------------------------------------------------------------------------
-  it('Profile A (Normal Event): handles 200 concurrent simulated participants with sub-50ms p95 and 0 server errors', async () => {
+  it('Profile A (Normal Event): handles 200 concurrent simulated participant workflows with 0 server errors', async () => {
     const concurrency = 200;
     const sseManager = new SSEConnectionManager();
     const latencies: number[] = [];
@@ -112,17 +119,18 @@ describe('Stage 10 — Realistic Load Profiles & Performance Engineering', () =>
     const totalRequests = latencies.length;
     const rps = (totalRequests / (testDurationMs / 1000));
 
-    console.log(`[Profile A — 200 Concurrent Participants]
-      - Concurrency: ${concurrency}
-      - Total Requests: ${totalRequests}
-      - Duration: ${testDurationMs.toFixed(2)}ms
-      - Throughput: ${rps.toFixed(1)} req/sec
-      - p50 Latency: ${p50.toFixed(2)}ms
-      - p95 Latency: ${p95.toFixed(2)}ms
-      - p99 Latency: ${p99.toFixed(2)}ms
+    console.log(`[Profile A — 200 Simulated Participants (In-Process Synthetic Simulation)]
+      - Benchmark Type: Synthetic / In-Process Concurrency Simulation
+      - Concurrency: ${concurrency} simulated workflows
+      - Total Operations: ${totalRequests}
+      - Duration: ${testDurationMs.toFixed(2)} ms
+      - Throughput: ${rps.toFixed(1)} synthetic ops/sec (V8 In-Process — NOT Server RPS)
+      - p50 Latency: ${formatLatency(p50)}
+      - p95 Latency: ${formatLatency(p95)}
+      - p99 Latency: ${formatLatency(p99)}
       - 5xx Errors: ${serverErrors} (0.00%)
       - 4xx Expected: ${clientErrors} (${((clientErrors / totalRequests) * 100).toFixed(1)}%)
-      - Heap Delta: ${heapDeltaMb.toFixed(2)}MB`);
+      - Heap Delta: ${heapDeltaMb.toFixed(2)} MB`);
 
     expect(serverErrors).toBe(0);
     expect(p95).toBeLessThan(50);
@@ -216,19 +224,20 @@ describe('Stage 10 — Realistic Load Profiles & Performance Engineering', () =>
     const totalRequests = latencies.length;
     const rps = (totalRequests / (testDurationMs / 1000));
 
-    console.log(`[Profile B — 400 Concurrent Peak (Acceptance Target)]
-      - Concurrency: ${concurrency}
-      - Active SSE: ${activeSSECount}
-      - Total Requests: ${totalRequests}
-      - Duration: ${testDurationMs.toFixed(2)}ms
-      - Fan-Out Time (10 updates x 350 clients): ${broadcastDurationMs.toFixed(2)}ms
-      - Throughput: ${rps.toFixed(1)} req/sec
-      - p50 Latency: ${p50.toFixed(2)}ms
-      - p95 Latency: ${p95.toFixed(2)}ms
-      - p99 Latency: ${p99.toFixed(2)}ms
+    console.log(`[Profile B — 400 Simulated Participants (In-Process Synthetic Simulation)]
+      - Benchmark Type: Synthetic / In-Process Concurrency Simulation
+      - Concurrency: ${concurrency} simulated workflows
+      - Active SSE Listeners: ${activeSSECount}
+      - Total Operations: ${totalRequests}
+      - Duration: ${testDurationMs.toFixed(2)} ms
+      - Fan-Out Time (10 updates x 350 clients = 3,500 deliveries): ${broadcastDurationMs.toFixed(2)} ms
+      - Throughput: ${rps.toFixed(1)} synthetic ops/sec (V8 In-Process — NOT Server RPS)
+      - p50 Latency: ${formatLatency(p50)}
+      - p95 Latency: ${formatLatency(p95)}
+      - p99 Latency: ${formatLatency(p99)}
       - 5xx Errors: ${serverErrors} (0.00%)
       - 4xx Client Errors: ${clientErrors}
-      - Heap Delta: ${heapDeltaMb.toFixed(2)}MB`);
+      - Heap Delta: ${heapDeltaMb.toFixed(2)} MB`);
 
     // Acceptance criteria validation
     expect(serverErrors).toBe(0);
@@ -240,7 +249,7 @@ describe('Stage 10 — Realistic Load Profiles & Performance Engineering', () =>
   });
 
   // ---------------------------------------------------------------------------
-  // PROFILE C: STRESS (600 Concurrent Participants)
+  // PROFILE C: STRESS (600 Concurrent Participants - In-Process Synthetic)
   // ---------------------------------------------------------------------------
   it('Profile C (Stress Target): sustains 600 concurrent clients with graceful degradation and 0 unhandled crashes', async () => {
     const concurrency = 600;
@@ -307,18 +316,19 @@ describe('Stage 10 — Realistic Load Profiles & Performance Engineering', () =>
     const totalRequests = latencies.length;
     const rps = (totalRequests / (testDurationMs / 1000));
 
-    console.log(`[Profile C — 600 Concurrent Stress Target]
-      - Concurrency: ${concurrency}
-      - Total Requests: ${totalRequests}
-      - Duration: ${testDurationMs.toFixed(2)}ms
-      - Fan-Out Time (10 updates x 600 clients = 6,000 writes): ${broadcastDurationMs.toFixed(2)}ms
-      - Throughput: ${rps.toFixed(1)} req/sec
-      - p50 Latency: ${p50.toFixed(2)}ms
-      - p95 Latency: ${p95.toFixed(2)}ms
-      - p99 Latency: ${p99.toFixed(2)}ms
+    console.log(`[Profile C — 600 Simulated Participants (In-Process Synthetic Simulation)]
+      - Benchmark Type: Synthetic / In-Process Concurrency Simulation
+      - Concurrency: ${concurrency} simulated workflows
+      - Total Operations: ${totalRequests}
+      - Duration: ${testDurationMs.toFixed(2)} ms
+      - Fan-Out Time (10 updates x 600 clients = 6,000 writes): ${broadcastDurationMs.toFixed(2)} ms
+      - Throughput: ${rps.toFixed(1)} synthetic ops/sec (V8 In-Process — NOT Server RPS)
+      - p50 Latency: ${formatLatency(p50)}
+      - p95 Latency: ${formatLatency(p95)}
+      - p99 Latency: ${formatLatency(p99)}
       - 5xx Errors: ${serverErrors} (0.00%)
       - 4xx/429 Rate Limits: ${rateLimitedOrClientErrors}
-      - Heap Delta: ${heapDeltaMb.toFixed(2)}MB`);
+      - Heap Delta: ${heapDeltaMb.toFixed(2)} MB`);
 
     expect(serverErrors).toBe(0);
     expect(sseManager.getConnectionCount()).toBe(concurrency);
@@ -327,7 +337,7 @@ describe('Stage 10 — Realistic Load Profiles & Performance Engineering', () =>
   });
 
   // ---------------------------------------------------------------------------
-  // PROFILE D: EXTREME (800+ Concurrent Clients)
+  // PROFILE D: EXTREME (800+ Concurrent Clients - In-Process Synthetic)
   // ---------------------------------------------------------------------------
   it('Profile D (Extreme Limit Test): processes 800+ concurrent clients measuring boundary resource consumption', async () => {
     const concurrency = 850;
@@ -374,16 +384,17 @@ describe('Stage 10 — Realistic Load Profiles & Performance Engineering', () =>
 
     const { p50, p95, p99 } = calculatePercentiles(latencies);
 
-    console.log(`[Profile D — 850 Concurrent Extreme Test]
-      - Concurrency: ${concurrency}
+    console.log(`[Profile D — 850 In-Memory SSE Streams (In-Process Synthetic Simulation)]
+      - Benchmark Type: Synthetic / In-Process Concurrency Simulation
+      - Concurrency: ${concurrency} SSE in-memory stream descriptors
       - Total SSE Broadcasts: 5 (4,250 deliveries)
-      - Total Duration: ${testDurationMs.toFixed(2)}ms
-      - Fan-Out Total Time: ${broadcastDurationMs.toFixed(2)}ms (${(broadcastDurationMs / 5).toFixed(2)}ms per broadcast)
-      - p50 Broadcast: ${p50.toFixed(2)}ms
-      - p95 Broadcast: ${p95.toFixed(2)}ms
-      - p99 Broadcast: ${p99.toFixed(2)}ms
+      - Total Duration: ${testDurationMs.toFixed(2)} ms
+      - Fan-Out Total Time: ${broadcastDurationMs.toFixed(2)} ms (${(broadcastDurationMs / 5).toFixed(2)} ms per broadcast)
+      - p50 Broadcast: ${formatLatency(p50)}
+      - p95 Broadcast: ${formatLatency(p95)}
+      - p99 Broadcast: ${formatLatency(p99)}
       - Server Errors: 0
-      - Heap Delta: ${heapDeltaMb.toFixed(2)}MB`);
+      - Heap Delta: ${heapDeltaMb.toFixed(2)} MB`);
 
     expect(sseManager.getConnectionCount()).toBe(concurrency);
     expect(broadcastDurationMs).toBeLessThan(250);

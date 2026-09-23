@@ -71,28 +71,45 @@ To measure actual network socket lifecycle, HTTP parsing, Fastify middleware, he
 
 ### Real HTTP Loopback Performance (200 Concurrent TCP Connections)
 
+- **Mechanism**: Node.js `http.request` with `agent: false` (disables connection pooling, guaranteeing a dedicated `net.Socket` instance per request).
+- **Concurrency Verification**: Sockets and in-flight counters monitored via `req.on('socket')`, `res.on('end')`, and `req.on('error')`.
+
 ```text
 [Real HTTP Benchmark — Fastify over Loopback TCP]
-  - Concurrency: 200 real TCP sockets
-  - Total Completed: 200 requests
-  - Wall Clock Duration: 140.75 ms
-  - Real HTTP Throughput: 1,421.0 req/sec
-  - p50 Latency: 99.46 ms
-  - p95 Latency: 131.69 ms
-  - p99 Latency: 131.75 ms
-  - Min Latency: 72.21 ms
-  - Max Latency: 131.77 ms
+  - Mechanism: Node.js http.request with agent:false (independent net.Socket per request)
+  - Dispatched Requests: 200
+  - Max In-Flight Requests: 200 (all 200 dispatched concurrently)
+  - Max Concurrently Active TCP Sockets: 200 (simultaneously open on loopback)
+  - Successful Connections: 200
+  - Failed Connections: 0
+  - Completed Responses: 200
+  - Wall Clock Duration: 153.86 ms
+  - Real HTTP Throughput: 1,299.9 req/sec (completed responses / elapsed sec)
+  - p50 Latency: 112.24 ms
+  - p95 Latency: 144.24 ms
+  - p99 Latency: 144.49 ms
+  - Min Latency: 83.94 ms
+  - Max Latency: 144.55 ms
   - 5xx Server Errors: 0 (0.00%)
 ```
 
 ### Real SSE TCP Streaming Benchmark (Live Event-Streams over TCP)
 
+- **Connection Mechanism**: 20 persistent HTTP streams established with `Accept: text/event-stream` and valid Bearer JWT participant tokens.
+- **Timing Boundary Clarification**:
+  1. *In-Process Stream Buffer Write Time*: Measures the time taken for `sseManager.broadcast()` to serialize JSON and call `rawRes.write()` across all 20 sockets in memory.
+  2. *Actual Network TCP Delivery Latency*: Measures the time from the broadcast trigger until every client receives the data chunk over its TCP socket (`res.on('data')`).
+
 ```text
 [Real SSE TCP Streaming Benchmark]
-  - Active TCP SSE streams: 20 persistent HTTP TCP sockets
-  - Handshake: Real HTTP GET /api/v1/leaderboard/stream with Bearer JWT
+  - Active TCP SSE Streams: 20 persistent HTTP TCP sockets (agent: false)
+  - HTTP Handshake: Real HTTP GET /api/v1/leaderboard/stream with Bearer JWT (Status 200)
   - Content-Type: text/event-stream
-  - Fan-Out Time over TCP: 0.28 ms
+  - In-Process Stream Buffer Write Time: 0.253 ms (synchronous rawRes.write loop across 20 sockets)
+  - Actual Network TCP Delivery (Min): 0.79 ms
+  - Actual Network TCP Delivery (Avg): 2.45 ms
+  - Actual Network TCP Delivery (Max / All Clients): 2.65 ms
+  - Clients That Received Payload Over TCP: 20 / 20 (100%)
   - Connections Cleanly Closed: 20
 ```
 
@@ -161,8 +178,8 @@ To measure actual network socket lifecycle, HTTP parsing, Fastify middleware, he
 
 ### What This Proves:
 - The scoring engine, database locking model, and leaderboard tie-breaking algorithms are **strictly concurrency-safe and free from race conditions, double solves, and score inflation**.
-- The Fastify HTTP server can sustain **200 concurrent real TCP connections** with 1,421 RPS and zero 5xx server errors on loopback.
-- The real SSE streaming engine can maintain persistent TCP streams and fan out updates in sub-millisecond time (0.28 ms).
+- The Fastify HTTP server can sustain **200 concurrent real TCP connections** with ~1,300–1,500 req/sec throughput and zero 5xx server errors on loopback.
+- The real SSE streaming engine maintains persistent TCP streams, performing in-process stream writes in ~0.25 ms and delivering live events across the network over loopback TCP sockets in 0.79–2.65 ms.
 - Dynamic challenge policy limits (`MAX_INSTANCES_PER_TEAM=2`, `MAX_GLOBAL_INSTANCES=100`) strictly reject excess requests with appropriate HTTP 400/503 status codes.
 - Outbox retry logic and SSE reconnection mechanisms recover state without data loss.
 

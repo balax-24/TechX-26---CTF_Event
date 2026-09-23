@@ -14,17 +14,20 @@ if [ -f ".env" ]; then
 fi
 
 DB_USER="${DB_USER:-techx_ctf_user}"
-DB_NAME="${DB_NAME:-techx_ctf_db}"
+DB_NAME="${RESTORE_DB:-${DB_NAME:-techx_ctf_db}}"
 CONTAINER_NAME="techx_ctf_postgres"
 
 if [ -z "${1:-}" ]; then
   echo "[-] Error: Please specify the backup file to restore."
-  echo "    Usage: $0 <path_to_backup.sql.gz> [--force]"
+  echo "    Usage: $0 <path_to_backup.sql.gz> [--force] [target_database]"
   exit 1
 fi
 
 BACKUP_FILE="$1"
 FORCE="${2:-}"
+if [ -n "${3:-}" ]; then
+  DB_NAME="$3"
+fi
 
 if [ ! -f "${BACKUP_FILE}" ]; then
   echo "[-] Error: Backup file '${BACKUP_FILE}' not found."
@@ -74,7 +77,7 @@ gunzip -c "${BACKUP_FILE}" | docker exec -i "${CONTAINER_NAME}" psql -U "${DB_US
 
 echo "[+] Verifying restored schema and core tables..."
 TABLE_COUNT=$(docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER}" -d "${DB_NAME}" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")
-CORE_TABLES=$(docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER}" -d "${DB_NAME}" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users', 'teams', 'challenges', 'submissions', 'score_ledger');")
+CORE_TABLES=$(docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER}" -d "${DB_NAME}" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users', 'teams', 'challenges', 'submissions', 'score_events');")
 
 CORE_COUNT=$(echo "${CORE_TABLES}" | tr -d ' ')
 if [ "${CORE_COUNT}" -lt 5 ]; then
@@ -84,6 +87,6 @@ fi
 
 echo "[✓] Database restoration completed successfully!"
 echo "[✓] Public tables detected post-restore: $(echo "${TABLE_COUNT}" | tr -d ' ')"
-echo "[✓] Core CTF tables validated: ${CORE_COUNT}/5 (users, teams, challenges, submissions, score_ledger)"
+echo "[✓] Core CTF tables validated: ${CORE_COUNT}/5 (users, teams, challenges, submissions, score_events)"
 echo "[i] Restart the backend container to reload caches: 'docker compose restart backend'"
 echo "======================================================================"

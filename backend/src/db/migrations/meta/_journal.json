@@ -15,6 +15,13 @@
       "when": 1790063263845,
       "tag": "0001_wide_mattie_franklin",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790070000000,
+      "tag": "0002_quiet_control_plane",
+      "breakpoints": true
     }
   ]
 }

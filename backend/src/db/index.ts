@@ -6,13 +6,27 @@ import { logger } from '../utils/logger.js';
 
 const { Pool } = pg;
 
-export const pool = new Pool({
-  connectionString: config.DATABASE_URL,
-  min: config.DB_POOL_MIN,
-  max: config.DB_POOL_MAX,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-});
+export const pool = new Pool(
+  config.DB_HOST && config.DB_HOST !== 'localhost'
+    ? {
+        host: config.DB_HOST,
+        port: config.DB_PORT,
+        user: config.DB_USER,
+        password: config.DB_PASSWORD,
+        database: config.DB_NAME,
+        min: config.DB_POOL_MIN,
+        max: config.DB_POOL_MAX,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
+      }
+    : {
+        connectionString: config.DATABASE_URL,
+        min: config.DB_POOL_MIN,
+        max: config.DB_POOL_MAX,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
+      }
+);
 
 pool.on('error', (err) => {
   logger.error({ err }, 'Unexpected error on idle PostgreSQL client');

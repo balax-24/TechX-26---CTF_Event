@@ -33,7 +33,7 @@ cleanup() {
     if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^techx_ctf_postgres$"; then
       echo ""
       echo "[*] Cleaning up smoke test artifacts from database..."
-      docker exec -i techx_ctf_postgres psql -U ctf_admin -d ctf_db -c "
+      docker exec -i techx_ctf_postgres psql -U "${DB_USER:-techx_ctf_user}" -d "${DB_NAME:-techx_ctf_db}" -c "
         DELETE FROM team_members WHERE user_id IN (SELECT id FROM users WHERE username IN ('${TEST_USER1}', '${TEST_USER2}'));
         DELETE FROM teams WHERE name = '${TEAM_NAME}';
         DELETE FROM users WHERE username IN ('${TEST_USER1}', '${TEST_USER2}');
@@ -129,10 +129,10 @@ else
   log_step "5. Authentication & JWT Issuance"
   LOGIN_RESP=$(curl -s -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/auth/login" \
     -H "Content-Type: application/json" \
-    -d "{\"email\":\"${TEST_EMAIL1}\",\"password\":\"${TEST_PASS}\"}")
+    -d "{\"identifier\":\"${TEST_EMAIL1}\",\"password\":\"${TEST_PASS}\"}")
 
   if echo "${LOGIN_RESP}" | grep -q '"token"'; then
-    AUTH_TOKEN1=$(echo "${LOGIN_RESP}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+    AUTH_TOKEN1=$(echo "${LOGIN_RESP}" | grep -o '"token":"[^"]*' | head -n 1 | cut -d'"' -f4)
     log_pass "5. Authentication & JWT Issuance"
   else
     log_fail "5. Authentication & JWT Issuance" "Response: ${LOGIN_RESP}"
@@ -151,7 +151,7 @@ else
     -d "{\"name\":\"${TEAM_NAME}\"}")
 
   if echo "${TEAM_RESP}" | grep -q '"inviteCode"'; then
-    INVITE_CODE=$(echo "${TEAM_RESP}" | grep -o '"inviteCode":"[^"]*' | cut -d'"' -f4)
+    INVITE_CODE=$(echo "${TEAM_RESP}" | grep -o '"inviteCode":"[^"]*' | head -n 1 | cut -d'"' -f4)
     log_pass "6. Team Creation (${TEAM_NAME}, Invite: ${INVITE_CODE})"
   else
     INVITE_CODE=""
@@ -169,7 +169,7 @@ else
     -d "{\"username\":\"${TEST_USER2}\",\"email\":\"${TEST_EMAIL2}\",\"password\":\"${TEST_PASS}\"}")
 
   if echo "${REG_RESP2}" | grep -q '"token"'; then
-    AUTH_TOKEN2=$(echo "${REG_RESP2}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+    AUTH_TOKEN2=$(echo "${REG_RESP2}" | grep -o '"token":"[^"]*' | head -n 1 | cut -d'"' -f4)
     if [ -n "${INVITE_CODE}" ]; then
       JOIN_RESP=$(curl -s -X POST "${TARGET_URL}/api/v1/teams/join" \
         -H "Content-Type: application/json" \
@@ -212,14 +212,25 @@ fi
 
 # 10. Leaderboard Real-Time SSE Stream Handshake
 log_step "10. Leaderboard Real-Time SSE Connection"
-SSE_HEADER=$(curl -s -I -N -H "Accept: text/event-stream" \
-  ${AUTH_TOKEN1:+-H "Authorization: Bearer ${AUTH_TOKEN1}"} \
-  "${TARGET_URL}/api/v1/leaderboard/stream" --max-time 3 || true)
+if [ -n "${AUTH_TOKEN1:-}" ]; then
+  SSE_HEADER=$(curl -s -I -N -H "Accept: text/event-stream" \
+    -H "Authorization: Bearer ${AUTH_TOKEN1}" \
+    "${TARGET_URL}/api/v1/leaderboard/stream" --max-time 3 || true)
 
-if echo "${SSE_HEADER}" | grep -qi "text/event-stream"; then
-  log_pass "10. Leaderboard Real-Time SSE Connection"
+  if echo "${SSE_HEADER}" | grep -qi "text/event-stream"; then
+    log_pass "10. Leaderboard Real-Time SSE Connection"
+  else
+    log_fail "10. Leaderboard Real-Time SSE Connection" "Did not receive text/event-stream header"
+  fi
 else
-  log_fail "10. Leaderboard Real-Time SSE Connection" "Did not receive text/event-stream header"
+  # Read-only check: verify that unauthenticated SSE request is properly blocked with 401
+  UNAUTH_SSE=$(curl -s -I -N -H "Accept: text/event-stream" \
+    "${TARGET_URL}/api/v1/leaderboard/stream" --max-time 3 || true)
+  if echo "${UNAUTH_SSE}" | grep -qi "401 Unauthorized"; then
+    log_pass "10. Leaderboard Real-Time SSE Connection (Auth Gate Verified: 401 Unauthorized)"
+  else
+    log_fail "10. Leaderboard Real-Time SSE Connection" "Unexpected unauth SSE response: ${UNAUTH_SSE}"
+  fi
 fi
 
 # 11. Protected Challenge File Storage Barrier
@@ -237,7 +248,9 @@ if [ "${READ_ONLY_MODE}" = true ]; then
 else
   log_step "12. Participant Logout"
   LOGOUT_RESP=$(curl -s -b "${COOKIE_JAR}" -X POST "${TARGET_URL}/api/v1/auth/logout" \
-    -H "Authorization: Bearer ${AUTH_TOKEN1}")
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${AUTH_TOKEN1}" \
+    -d "{}" --max-time 5 || true)
   log_pass "12. Participant Logout"
 fi
 

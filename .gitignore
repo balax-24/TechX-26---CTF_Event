@@ -41,3 +41,7 @@ Thumbs.db
 # Challenge files / uploads
 data/challenges/static/*
 !data/challenges/static/.gitkeep
+
+# Backups
+backups/*.sql*
+!backups/.gitkeep

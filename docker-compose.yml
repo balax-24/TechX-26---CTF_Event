@@ -99,7 +99,9 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - DB_HOST=postgres
+      - DATABASE_URL=postgresql://${DB_USER:-techx_ctf_user}:${DB_PASSWORD:-techx_ctf_secure_password_2026}@postgres:5432/${DB_NAME:-techx_ctf_db}
       - REDIS_HOST=redis
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-techx_redis_secure_password_2026}@redis:6379/0
       - CHALLENGE_GATEWAY_URL=http://challenge_gateway:5000
       - CHALLENGE_GATEWAY_SECRET=${CHALLENGE_GATEWAY_SECRET:-techx_gateway_secure_internal_token_2026}
     depends_on:
@@ -143,6 +145,7 @@ services:
     security_opt:
       - "no-new-privileges:true"
     group_add:
+      - "0"
       - "${DOCKER_GID:-999}"
     command: ["node", "dist/modules/dynamic_challenges/gateway_server.js"]
     environment:

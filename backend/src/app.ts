@@ -30,7 +30,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false, // We use our structured pino logger explicitly
     genReqId: () => randomUUID(),
-    trustProxy: true,
+    trustProxy: 1, // Only trust the immediate reverse proxy hop (NGINX)
     bodyLimit: 1048576, // 1MB global body limit
     disableRequestLogging: config.NODE_ENV === 'test',
   });
@@ -41,20 +41,23 @@ export async function buildApp(): Promise<FastifyInstance> {
   // 2. CORS Configuration
   const allowedOrigins = config.CORS_ORIGIN.split(',').map((origin) => origin.trim());
 
-  // 3. Helmet Security Headers with Production CSP
+  // 3. Helmet Security Headers with Comprehensive CSP
   await app.register(helmet, {
-    contentSecurityPolicy: config.NODE_ENV === 'production' ? {
+    contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'blob:'],
+        fontSrc: ["'self'", 'data:'],
         connectSrc: ["'self'", ...allowedOrigins.filter((o) => o !== '*')],
-        frameAncestors: ["'none'"],
+        frameSrc: ["'none'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
       },
-    } : false,
+    },
     crossOriginEmbedderPolicy: false,
     xssFilter: true,
     noSniff: true,

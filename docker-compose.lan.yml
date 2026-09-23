@@ -7,8 +7,6 @@
 # - Direct HTTP proxy without TLS overhead
 # ==============================================================================
 
-version: '3.8'
-
 services:
   nginx:
     ports:

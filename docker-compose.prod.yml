@@ -7,8 +7,6 @@
 # - Strict security headers, HSTS, and rate buffering
 # ==============================================================================
 
-version: '3.8'
-
 services:
   nginx:
     ports:

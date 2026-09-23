@@ -33,8 +33,10 @@ ENV APP_HOST=0.0.0.0
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-# Copy compiled JavaScript from builder stage
+# Copy compiled JavaScript and SQL migration files from builder stage
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/src/db/migrations ./dist/db/migrations
+COPY --from=builder /app/src/db/migrations ./src/db/migrations
 
 # Create storage directory for challenges
 RUN mkdir -p /data/challenges/static && chown -R node:node /data/challenges /app

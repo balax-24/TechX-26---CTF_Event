@@ -37,7 +37,7 @@ export async function checkDatabaseHealth(): Promise<{
     }
   } catch (err: any) {
     logger.warn({ err: err.message }, 'Database healthcheck failed');
-    return { status: 'unhealthy', error: err.message };
+    return { status: 'unhealthy', error: 'database_unavailable' };
   }
 }
 

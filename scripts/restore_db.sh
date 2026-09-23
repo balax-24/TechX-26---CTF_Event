@@ -1,36 +1,81 @@
 #!/bin/bash
 # ==============================================================================
-# TECHX CTF 2026 — DATABASE RESTORE SCRIPT
+# TECHX CTF 2026 — DATABASE RESTORATION UTILITY
 # ==============================================================================
-# Restores a compressed PostgreSQL dump into the database container.
-# Usage: ./scripts/restore_db.sh ./backups/techx_ctf_backup_YYYYMMDD_HHMMSS.sql.gz
+# Restores an atomic PostgreSQL database dump into the active container.
+# Usage: ./scripts/restore_db.sh <path_to_backup.sql.gz> [--force]
 # ==============================================================================
 
 set -euo pipefail
 
+# Load environment variables if .env exists
+if [ -f ".env" ]; then
+  export $(grep -v '^#' .env | xargs -d '\n' 2>/dev/null || true)
+fi
+
+DB_USER="${DB_USER:-techx_ctf_user}"
+DB_NAME="${DB_NAME:-techx_ctf_db}"
+CONTAINER_NAME="techx_ctf_postgres"
+
 if [ -z "${1:-}" ]; then
   echo "[-] Error: Please specify the backup file to restore."
-  echo "    Usage: $0 <path_to_backup.sql.gz>"
+  echo "    Usage: $0 <path_to_backup.sql.gz> [--force]"
   exit 1
 fi
 
 BACKUP_FILE="$1"
+FORCE="${2:-}"
 
 if [ ! -f "${BACKUP_FILE}" ]; then
   echo "[-] Error: Backup file '${BACKUP_FILE}' not found."
   exit 1
 fi
 
-echo "[!] WARNING: This will overwrite the current 'techx_ctf_db' database!"
-read -p "Are you sure you want to proceed? (yes/no): " CONFIRM
-if [ "${CONFIRM}" != "yes" ]; then
-  echo "[-] Restore cancelled."
-  exit 0
+echo "======================================================================"
+echo "          IEEE TECHX CTF 2026 — DATABASE RESTORE                      "
+echo "======================================================================"
+echo "[+] Target Database: ${DB_NAME} (User: ${DB_USER})"
+echo "[+] Source Backup:   ${BACKUP_FILE}"
+
+# Validate gzip integrity before touching database
+echo "[+] Verifying archive integrity..."
+if ! gunzip -t "${BACKUP_FILE}"; then
+  echo "[-] Error: Archive '${BACKUP_FILE}' is corrupt. Restore aborted."
+  exit 1
 fi
 
-echo "[+] Restoring from ${BACKUP_FILE}..."
+# Verify container is running and ready
+if ! docker ps --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}\$"; then
+  echo "[-] Error: Database container '${CONTAINER_NAME}' is not running!"
+  exit 1
+fi
 
-# Decompress and feed directly into psql
-gunzip -c "${BACKUP_FILE}" | docker exec -i techx_ctf_postgres psql -U techx_ctf_user -d techx_ctf_db
+echo "[+] Checking PostgreSQL readiness..."
+if ! docker exec -i "${CONTAINER_NAME}" pg_isready -U "${DB_USER}" -d "${DB_NAME}" >/dev/null 2>&1; then
+  echo "[-] Error: PostgreSQL is not ready to accept connections!"
+  exit 1
+fi
+
+if [ "${FORCE}" != "--force" ]; then
+  echo ""
+  echo "[!] WARNING: THIS OPERATION WILL OVERWRITE ALL EXISTING TABLES AND DATA IN '${DB_NAME}'!"
+  read -p "    Are you sure you want to proceed? (Type 'RESTORE' to confirm): " CONFIRM
+  if [ "${CONFIRM}" != "RESTORE" ]; then
+    echo "[-] Database restore cancelled."
+    exit 0
+  fi
+fi
+
+echo "[+] Pausing application traffic: Recommended to run 'docker compose stop backend' first."
+echo "[+] Streaming SQL dump into PostgreSQL..."
+
+# Decompress and pipe directly into psql
+gunzip -c "${BACKUP_FILE}" | docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1
+
+echo "[+] Verifying restored schema..."
+TABLE_COUNT=$(docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER}" -d "${DB_NAME}" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")
 
 echo "[✓] Database restoration completed successfully!"
+echo "[✓] Public tables detected post-restore: $(echo "${TABLE_COUNT}" | tr -d ' ')"
+echo "[i] Restart the backend container to reload caches: 'docker compose restart backend'"
+echo "======================================================================"

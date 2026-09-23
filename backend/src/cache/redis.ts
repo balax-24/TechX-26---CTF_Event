@@ -43,10 +43,10 @@ export async function checkRedisHealth(): Promise<{
     if (pong === 'PONG') {
       return { status: 'healthy', latencyMs: Date.now() - start };
     }
-    return { status: 'unhealthy', error: `Unexpected ping response: ${pong}` };
+    return { status: 'unhealthy', error: 'unexpected_ping_response' };
   } catch (err: any) {
     logger.warn({ err: err.message }, 'Redis healthcheck failed');
-    return { status: 'unhealthy', error: err.message };
+    return { status: 'unhealthy', error: 'redis_unavailable' };
   }
 }
 

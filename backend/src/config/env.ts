@@ -6,6 +6,15 @@ import * as path from 'path';
 dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
+const DEFAULT_DEV_SECRETS = new Set([
+  'super_secret_jwt_key_techx_ctf_change_me_in_production_32chars!',
+  'super_secret_cookie_signing_key_techx_ctf_32chars_minimum!',
+  'techx_gateway_secure_internal_token_2026',
+  'techx_ctf_secure_password_2026',
+  'techx_redis_secure_password_2026',
+  'techx_ctf_2026_super_secret_flag_salt',
+]);
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   DEPLOYMENT_MODE: z.enum(['lan', 'production']).default('lan'),
@@ -55,12 +64,51 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
+export function validateProductionSecrets(env: Env): void {
+  if (env.NODE_ENV !== 'production') {
+    return;
+  }
+
+  const violations: string[] = [];
+
+  if (DEFAULT_DEV_SECRETS.has(env.JWT_SECRET) || env.JWT_SECRET.length < 32) {
+    violations.push('JWT_SECRET must be at least 32 characters and cannot use default development placeholder');
+  }
+
+  if (DEFAULT_DEV_SECRETS.has(env.COOKIE_SECRET) || env.COOKIE_SECRET.length < 32) {
+    violations.push('COOKIE_SECRET must be at least 32 characters and cannot use default development placeholder');
+  }
+
+  if (DEFAULT_DEV_SECRETS.has(env.CHALLENGE_GATEWAY_SECRET) || env.CHALLENGE_GATEWAY_SECRET.length < 32) {
+    violations.push('CHALLENGE_GATEWAY_SECRET must be at least 32 characters and cannot use default development placeholder');
+  }
+
+  if (DEFAULT_DEV_SECRETS.has(env.FLAG_SALT) || env.FLAG_SALT.length < 16) {
+    violations.push('FLAG_SALT must be at least 16 characters and cannot use default development placeholder');
+  }
+
+  if (DEFAULT_DEV_SECRETS.has(env.DB_PASSWORD) || env.DB_PASSWORD === 'postgres' || env.DB_PASSWORD === 'password') {
+    violations.push('DB_PASSWORD cannot use default development password');
+  }
+
+  if (DEFAULT_DEV_SECRETS.has(env.REDIS_PASSWORD) || env.REDIS_PASSWORD === 'password') {
+    violations.push('REDIS_PASSWORD cannot use default development password');
+  }
+
+  if (violations.length > 0) {
+    const errorMsg = `\n================================================================================\nFATAL: Production Security Gate Rejection!\nInsecure or default development secrets detected when NODE_ENV=production.\nRun './scripts/generate_secrets.sh' to provision cryptographically secure secrets.\nViolations:\n - ${violations.join('\n - ')}\n================================================================================\n`;
+    console.error(errorMsg);
+    throw new Error('Production environment secret validation failed');
+  }
+}
+
 function loadConfig(): Env {
   const result = envSchema.safeParse(process.env);
   if (!result.success) {
     console.error('Invalid environment configuration:', JSON.stringify(result.error.format(), null, 2));
     throw new Error('Environment configuration validation failed');
   }
+  validateProductionSecrets(result.data);
   return result.data;
 }
 

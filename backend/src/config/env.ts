@@ -26,7 +26,7 @@ const envSchema = z.object({
   PUBLIC_PORT: z.coerce.number().default(80),
   PUBLIC_PROTOCOL: z.enum(['http', 'https']).default('http'),
 
-  CORS_ORIGIN: z.string().default('http://localhost:5173,http://localhost:4000,http://localhost,http://127.0.0.1'),
+  CORS_ORIGIN: z.string().default('http://localhost:5173,http://localhost:5174,http://localhost:4000,http://localhost,http://127.0.0.1'),
 
   CHALLENGE_GATEWAY_URL: z.string().default('http://127.0.0.1:5000'),
   CHALLENGE_GATEWAY_SECRET: z.string().min(16).default('techx_gateway_secure_internal_token_2026'),

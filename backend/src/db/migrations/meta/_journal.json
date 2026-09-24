@@ -22,6 +22,13 @@
       "when": 1790070000000,
       "tag": "0002_quiet_control_plane",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790080000000,
+      "tag": "0003_dynamic_challenges",
+      "breakpoints": true
     }
   ]
 }

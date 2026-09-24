@@ -45,3 +45,6 @@ data/challenges/static/*
 # Backups
 backups/*.sql*
 !backups/.gitkeep
+
+# Simulation artifacts
+**/simulation_users.json

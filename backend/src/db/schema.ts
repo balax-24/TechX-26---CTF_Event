@@ -44,8 +44,8 @@ export const teams = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     name: varchar('name', { length: 100 }).notNull().unique(),
-    inviteCodeHash: varchar('invite_code_hash', { length: 255 }).notNull(),
-    captainId: uuid('captain_id').notNull().references(() => users.id),
+    inviteCodeHash: varchar('invite_code_hash', { length: 255 }),
+    captainId: uuid('captain_id').references(() => users.id),
     score: integer('score').notNull().default(0),
     lastScoreAt: timestamp('last_score_at', { withTimezone: true }).notNull().defaultNow(),
     status: varchar('status', { length: 20 }).notNull().default('active'), // 'active', 'disabled', 'disqualified'

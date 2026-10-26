@@ -11,12 +11,15 @@ import { instanceCleanupWorker } from './modules/dynamic_challenges/cleanup.work
 async function startServer() {
   try {
     const app = await buildApp();
+    const backgroundWorkersEnabled = process.env.ENABLE_BACKGROUND_WORKERS !== 'false';
 
     // 1. Initialize Real-Time Outbox Worker, Redis Subscriber, and Dynamic Challenge Cleanup Worker
-    outboxWorker.start();
-    await redisSubscriber.start();
-    sseManager.startHeartbeat();
-    instanceCleanupWorker.start();
+    if (backgroundWorkersEnabled) {
+      outboxWorker.start();
+      await redisSubscriber.start();
+      sseManager.startHeartbeat();
+      instanceCleanupWorker.start();
+    }
 
     const address = await app.listen({
       port: config.APP_PORT,
@@ -42,9 +45,11 @@ async function startServer() {
         try {
           // 1. Stop real-time engine components and cleanup worker
           sseManager.closeAll();
-          await redisSubscriber.stop();
-          outboxWorker.stop();
-          instanceCleanupWorker.stop();
+          if (backgroundWorkersEnabled) {
+            await redisSubscriber.stop();
+            outboxWorker.stop();
+            instanceCleanupWorker.stop();
+          }
 
           // 2. Close HTTP server
           await app.close();

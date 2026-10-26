@@ -29,6 +29,13 @@
       "when": 1790080000000,
       "tag": "0003_dynamic_challenges",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790090000000,
+      "tag": "0004_admin_provisioning",
+      "breakpoints": true
     }
   ]
 }

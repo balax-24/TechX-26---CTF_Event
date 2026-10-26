@@ -7,6 +7,7 @@ import jwt from '@fastify/jwt';
 import { randomUUID } from 'crypto';
 
 import { config } from './config/env.js';
+import { isAllowedOrigin } from './utils/origin.js';
 import { logger, sanitizeLogUrl } from './utils/logger.js';
 import { checkDatabaseHealth } from './db/index.js';
 import { checkRedisHealth } from './cache/redis.js';
@@ -67,9 +68,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(cors, {
     origin: (origin, cb) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      if (isAllowedOrigin(origin)) {
         return cb(null, true);
       }
       return cb(new Error('CORS Not Allowed'), false);

@@ -112,7 +112,7 @@ services:
       challenge_gateway:
         condition: service_healthy
     volumes:
-      - challenge_files:/data/challenges/static
+      - ./data/challenges/static:/data/challenges/static
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:4000/health || exit 1"]
       interval: 10s
@@ -188,11 +188,16 @@ services:
     restart: unless-stopped
     security_opt:
       - "no-new-privileges:true"
+    ports:
+      - "${PUBLIC_PORT:-80}:80"
+      - "${ADMIN_PORT:-8080}:8080"
     depends_on:
       backend:
         condition: service_healthy
     volumes:
-      - challenge_files:/data/challenges/static:ro
+      - ./data/challenges/static:/data/challenges/static:ro
+      - ./admin-frontend/dist:/usr/share/nginx/admin-html:ro
+
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:80/health || exit 1"]
       interval: 10s

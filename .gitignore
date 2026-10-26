@@ -43,8 +43,46 @@ data/challenges/static/*
 !data/challenges/static/.gitkeep
 
 # Backups
-backups/*.sql*
+backups/*
 !backups/.gitkeep
+
+# Python cache artifacts
+__pycache__/
+*.py[cod]
+*$py.class
 
 # Simulation artifacts
 **/simulation_users.json
+
+# Local binaries and tunnel utilities
+cloudflared*.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Private Organizer Materials, Participant Credentials & Solution Guides
+Credentials/
+Final/
+TECHX_CTF_2026_COMPLETE_CHALLENGE_SOLUTIONS.md
+TECHX_CTF_2026_CHALLENGE_CONTENT_REPORT.md
+TECHX_CTF_2026_CHALLENGE_GUIDE.md
+*SOLUTION*.md
+*SOLUTIONS*.md
+
+# Sensitive JSON dumps, credential exports, and local benchmark results
+scripts/challenges_inventory.json
+scripts/db_challenges_dump.json
+scripts/provisioning_results.json
+scripts/last_browser_validation_results.json
+scripts/last_load_results.json
+
+# Private Organizer Scripts & Solvers
+scripts/test_all_challenges.cjs
+scripts/build_docs.cjs
+scripts/provision_confirmed_teams.cjs
+scripts/smoke_test_browser.cjs
+scripts/debug_browser.cjs
+archive/internal-development/Stages.txt
+archive/internal-development/TECHX_CTF_2026_TEAM_CLEANUP_REPORT.md
+

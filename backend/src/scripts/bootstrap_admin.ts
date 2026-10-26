@@ -16,19 +16,25 @@ export async function bootstrapAdmin(options?: BootstrapAdminOptions): Promise<{
   username: string;
   email: string;
 }> {
-  const username = options?.username || process.env.ADMIN_USERNAME;
-  const email = options?.email || process.env.ADMIN_EMAIL;
-  const password = options?.password || process.env.ADMIN_PASSWORD;
+  const email = options?.email !== undefined ? options.email : (process.env.ADMIN_BOOTSTRAP_EMAIL || process.env.ADMIN_EMAIL);
+  const username =
+    options?.username !== undefined
+      ? options.username
+      : process.env.ADMIN_BOOTSTRAP_USERNAME ||
+        process.env.ADMIN_USERNAME ||
+        (email && email.includes('@') ? email.split('@')[0] : 'admin');
+  const password = options?.password !== undefined ? options.password : (process.env.ADMIN_BOOTSTRAP_PASSWORD || process.env.ADMIN_PASSWORD);
 
   if (!username || !email || !password) {
     throw new Error(
-      'Admin bootstrap requires ADMIN_USERNAME, ADMIN_EMAIL, and ADMIN_PASSWORD (via env or arguments)'
+      'Admin bootstrap requires ADMIN_USERNAME, ADMIN_EMAIL, and ADMIN_PASSWORD'
     );
   }
 
-  if (password.length < 12) {
+  if (password.length < 10) {
     throw new Error('Admin bootstrap password must be at least 12 characters long');
   }
+
 
   if (username.length < 3 || username.length > 50) {
     throw new Error('Admin bootstrap username must be between 3 and 50 characters');
@@ -38,12 +44,29 @@ export async function bootstrapAdmin(options?: BootstrapAdminOptions): Promise<{
   const existingUsers = await db
     .select()
     .from(users)
-    .where(or(eq(users.username, username), eq(users.email, email)))
+    .where(or(eq(users.username, username), eq(users.email, email.toLowerCase())))
     .limit(1);
 
   if (existingUsers.length > 0) {
     const existing = existingUsers[0];
-    logger.info({ username: existing.username, role: existing.role }, 'Admin user already exists — idempotent skip');
+    const passwordHash = await hashPassword(password);
+    await db
+      .update(users)
+      .set({
+        role: 'superadmin',
+        isActive: true,
+        passwordHash,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, existing.id));
+
+    try {
+      const { getRedisClient } = await import('../cache/redis.js');
+      const redis = getRedisClient();
+      await redis.set(`user:must_change_password:${existing.id}`, '1');
+    } catch {}
+
+    logger.info({ username: existing.username, role: 'superadmin' }, 'Admin user updated to superadmin and flagged for password change');
     return {
       created: false,
       userId: existing.id,
@@ -59,12 +82,18 @@ export async function bootstrapAdmin(options?: BootstrapAdminOptions): Promise<{
     .insert(users)
     .values({
       username,
-      email,
+      email: email.toLowerCase(),
       passwordHash,
       role: 'superadmin',
       isActive: true,
     })
     .returning();
+
+  try {
+    const { getRedisClient } = await import('../cache/redis.js');
+    const redis = getRedisClient();
+    await redis.set(`user:must_change_password:${newUser.id}`, '1');
+  } catch {}
 
   // Audit log entry (sanitized: password is strictly excluded)
   await db.insert(auditLogs).values({

@@ -27,108 +27,37 @@ export const teamRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   };
 
   // ---------------------------------------------------------------------------
-  // 1. CREATE TEAM
+  // ---------------------------------------------------------------------------
+  // 1. CREATE TEAM (DISABLED - Teams are admin-provisioned only)
   // ---------------------------------------------------------------------------
   app.post(
     '/',
     { preHandler: [authenticate, csrfProtection], bodyLimit: 16384 },
-    async (req, reply) => {
-      // Rate limit: 5 team creations per hour per user
-      const rateLimit = await checkRateLimit(`team:create:${req.user!.id}`, 5, 3600000);
-      if (!rateLimit.allowed) {
-        return reply.tooManyRequests('Team creation rate limit exceeded. Please wait.');
-      }
-
-      const parseResult = createTeamSchema.safeParse(req.body);
-      if (!parseResult.success) {
-        return reply.badRequest(parseResult.error.errors[0].message);
-      }
-
-      try {
-        const result = await teamsService.createTeam(req.user!.id, parseResult.data);
-
-        // Re-sign user token with updated teamId and teamRole
-        const token = app.jwt.sign({
-          id: req.user!.id,
-          username: req.user!.username,
-          email: req.user!.email,
-          role: req.user!.role,
-          teamId: result.team.id,
-          teamRole: 'captain',
-        });
-
-        return reply.status(201).send({
-          success: true,
-          team: result.team,
-          inviteCode: result.inviteCode,
-          token,
-        });
-      } catch (err: any) {
-        if (err.message === 'ALREADY_IN_TEAM') {
-          return reply.badRequest('You already belong to a team');
-        }
-        if (err.message === 'TEAM_NAME_EXISTS') {
-          return reply.conflict('A team with this name already exists');
-        }
-        req.log.error({ err }, 'Create team error');
-        return reply.internalServerError('Failed to create team');
-      }
+    async (_req, reply) => {
+      return reply.status(403).send({
+        statusCode: 403,
+        error: 'Forbidden',
+        message: 'Self-service team creation is disabled. Teams are provisioned by tournament administrators.',
+        code: 'TEAM_CREATION_DISABLED',
+      });
     }
   );
 
   // ---------------------------------------------------------------------------
-  // 2. JOIN TEAM
+  // 2. JOIN TEAM (DISABLED - Team rosters are admin-provisioned only)
   // ---------------------------------------------------------------------------
   app.post(
     '/join',
     { preHandler: [authenticate, csrfProtection], bodyLimit: 16384 },
-    async (req, reply) => {
-      // Rate limit: 10 join attempts per 10 minutes per user (anti-brute-force for invite codes)
-      const rateLimit = await checkRateLimit(`team:join:${req.user!.id}`, 10, 600000);
-      if (!rateLimit.allowed) {
-        return reply.tooManyRequests('Too many team join attempts. Please slow down.');
-      }
-
-      const parseResult = joinTeamSchema.safeParse(req.body);
-      if (!parseResult.success) {
-        return reply.badRequest(parseResult.error.errors[0].message);
-      }
-
-    try {
-      const team = await teamsService.joinTeam(req.user!.id, parseResult.data);
-
-      // Re-sign user token with updated teamId and teamRole
-      const token = app.jwt.sign({
-        id: req.user!.id,
-        username: req.user!.username,
-        email: req.user!.email,
-        role: req.user!.role,
-        teamId: team.id,
-        teamRole: 'member',
+    async (_req, reply) => {
+      return reply.status(403).send({
+        statusCode: 403,
+        error: 'Forbidden',
+        message: 'Public team joining is disabled. Team rosters are provisioned by tournament administrators.',
+        code: 'TEAM_JOIN_DISABLED',
       });
-
-      return reply.send({
-        success: true,
-        team,
-        token,
-      });
-    } catch (err: any) {
-      if (err.message === 'ALREADY_IN_TEAM') {
-        return reply.badRequest('You already belong to a team');
-      }
-      if (err.message === 'INVALID_INVITE_CODE') {
-        return reply.notFound('Invalid or expired team invite code');
-      }
-      if (err.message === 'TEAM_BANNED') {
-        return reply.forbidden('This team has been disqualified or banned');
-      }
-      if (err.message === 'TEAM_FULL') {
-        return reply.badRequest('This team has already reached the maximum member limit');
-      }
-      req.log.error({ err }, 'Join team error');
-      return reply.internalServerError('Failed to join team');
     }
-  });
+  );
 
   // ---------------------------------------------------------------------------
   // 3. GET CURRENT USER'S TEAM (/me)
@@ -175,43 +104,20 @@ export const teamRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // ---------------------------------------------------------------------------
-  // 5. LEAVE TEAM
+  // 5. LEAVE TEAM (DISABLED - Team rosters are admin-provisioned only)
   // ---------------------------------------------------------------------------
   app.post(
     '/leave',
-    { preHandler: [authenticate, requireTeam, csrfProtection] },
-    async (req, reply) => {
-    try {
-      const result = await teamsService.leaveTeam(req.user!.id, req.user!.teamId!);
-
-      // Re-sign token without team
-      const token = app.jwt.sign({
-        id: req.user!.id,
-        username: req.user!.username,
-        email: req.user!.email,
-        role: req.user!.role,
-        teamId: null,
-        teamRole: null,
+    { preHandler: [authenticate, csrfProtection] },
+    async (_req, reply) => {
+      return reply.status(403).send({
+        statusCode: 403,
+        error: 'Forbidden',
+        message: 'Self-service team modifications are disabled. Contact a tournament administrator.',
+        code: 'TEAM_LEAVE_DISABLED',
       });
-
-      return reply.send({
-        success: true,
-        disbanded: result.disbanded,
-        message: result.disbanded
-          ? 'As the sole captain, your team has been disbanded'
-          : 'Successfully left the team',
-        token,
-      });
-    } catch (err: any) {
-      if (err.message === 'CAPTAIN_CANNOT_LEAVE') {
-        return reply.badRequest(
-          'Captain cannot leave while other members remain. Disband or transfer captaincy first.'
-        );
-      }
-      req.log.error({ err }, 'Leave team error');
-      return reply.internalServerError('Failed to leave team');
     }
-  });
+  );
 
   // ---------------------------------------------------------------------------
   // 6. LIST TEAMS

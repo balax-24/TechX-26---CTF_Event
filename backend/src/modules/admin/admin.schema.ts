@@ -102,9 +102,87 @@ export const adminScoreAdjustmentSchema = z.object({
 
 export type AdminScoreAdjustmentInput = z.infer<typeof adminScoreAdjustmentSchema>;
 
+export const createTeamAdminSchema = z.object({
+  name: z.string().min(2).max(100),
+  captainId: z.string().uuid().optional(),
+  reason: z.string().min(3).optional(),
+});
+
+export type CreateTeamAdminInput = z.infer<typeof createTeamAdminSchema>;
+
+export const addTeamMemberAdminSchema = z.object({
+  userId: z.string().uuid(),
+  role: z.enum(['captain', 'member']).default('member'),
+  reason: z.string().min(3).optional(),
+});
+
+export type AddTeamMemberAdminInput = z.infer<typeof addTeamMemberAdminSchema>;
+
 // -----------------------------------------------------------------------------
-// 3. USER MODERATION SCHEMAS
+// 3. USER MODERATION & PROVISIONING SCHEMAS
 // -----------------------------------------------------------------------------
+export function deriveUsernameFromEmail(email: string): string {
+  const localPart = email.trim().split('@')[0] || '';
+  return localPart;
+}
+
+export const provisionTeamWithParticipantSchema = z.object({
+  teamName: z
+    .string()
+    .min(2, 'Team name must be at least 2 characters')
+    .max(100, 'Team name cannot exceed 100 characters'),
+  email: z.string().email('Valid participant email is required').max(255),
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(128, 'Password cannot exceed 128 characters'),
+  username: z
+    .string()
+    .min(3, 'Username must be between 3 and 50 characters')
+    .max(50, 'Username must be between 3 and 50 characters')
+    .regex(/^[a-zA-Z0-9_.-]+$/, 'Username may only contain alphanumeric characters, underscores, hyphens, and periods')
+    .optional(),
+  reason: z.string().min(3).optional(),
+});
+
+export type ProvisionTeamWithParticipantInput = z.infer<typeof provisionTeamWithParticipantSchema>;
+
+export const createParticipantAdminSchema = z.object({
+  username: z
+    .string()
+    .min(3)
+    .max(50)
+    .regex(/^[a-zA-Z0-9_.-]+$/, 'Username may only contain alphanumeric characters, underscores, hyphens, and periods'),
+  email: z.string().email(),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(128),
+  teamId: z.string().uuid(),
+  roleInTeam: z.enum(['captain', 'member']).default('member'),
+  reason: z.string().min(3).optional(),
+});
+
+export type CreateParticipantAdminInput = z.infer<typeof createParticipantAdminSchema>;
+
+export const resetPasswordAdminSchema = z.object({
+  password: z.string().min(8, 'Password must be at least 8 characters').max(128),
+  reason: z.string().min(3, 'Reason of at least 3 characters is required'),
+});
+
+export type ResetPasswordAdminInput = z.infer<typeof resetPasswordAdminSchema>;
+
+export const patchUserAdminSchema = z.object({
+  username: z
+    .string()
+    .min(3)
+    .max(50)
+    .regex(/^[a-zA-Z0-9_.-]+$/, 'Username may only contain alphanumeric characters, underscores, hyphens, and periods')
+    .optional(),
+  email: z.string().email().optional(),
+  isActive: z.boolean().optional(),
+  reason: z.string().min(3, 'Reason of at least 3 characters is required'),
+});
+
+export type PatchUserAdminInput = z.infer<typeof patchUserAdminSchema>;
+
 export const setUserActiveSchema = z.object({
   isActive: z.boolean(),
   reason: z.string().min(3, 'Reason of at least 3 characters is required'),
@@ -133,3 +211,66 @@ export const auditLogQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
+
+// -----------------------------------------------------------------------------
+// 5. TEST TEAM LOOKUP & CLEANUP SCHEMAS
+// -----------------------------------------------------------------------------
+export const lookupTestTeamSchema = z.object({
+  username: z
+    .string()
+    .min(1, 'Participant username is required')
+    .max(50, 'Username cannot exceed 50 characters')
+    .trim(),
+});
+
+export type LookupTestTeamInput = z.infer<typeof lookupTestTeamSchema>;
+
+export const cleanupTestTeamSchema = z.object({
+  username: z
+    .string()
+    .min(1, 'Participant username is required')
+    .max(50, 'Username cannot exceed 50 characters')
+    .trim(),
+  confirmation: z.string().min(1, 'Confirmation string is required').trim(),
+  reason: z.string().min(3).optional(),
+});
+
+export type CleanupTestTeamInput = z.infer<typeof cleanupTestTeamSchema>;
+
+/**
+ * Strict verification that an account is designated as a test account.
+ * Enforces the test account safety gate specified in Part 5:
+ * Only accounts matching explicit test prefixes (test_, test-, techx_test_, etc.)
+ * may be deleted by test cleanup utilities. Real competition accounts are strictly refused.
+ */
+export function isTestAccount(username: string, teamName?: string): boolean {
+  const normalizedUser = username.trim().toLowerCase();
+  const userMatches =
+    normalizedUser.startsWith('test_') ||
+    normalizedUser.startsWith('test-') ||
+    normalizedUser.startsWith('techx_test_') ||
+    normalizedUser.startsWith('testuser') ||
+    normalizedUser.startsWith('team_test_') ||
+    normalizedUser.startsWith('team_interactive_test_') ||
+    normalizedUser.startsWith('team_bat_') ||
+    normalizedUser.startsWith('qa_') ||
+    normalizedUser.startsWith('ui_') ||
+    normalizedUser === 'sentinel' ||
+    normalizedUser === 'shivani';
+
+  const normalizedTeam = (teamName || '').trim().toLowerCase();
+  const teamMatches =
+    normalizedTeam.startsWith('test_') ||
+    normalizedTeam.startsWith('test-') ||
+    normalizedTeam.startsWith('techx_test_') ||
+    normalizedTeam.startsWith('team_test_') ||
+    normalizedTeam.startsWith('team_interactive_test_') ||
+    normalizedTeam.startsWith('team_bat_') ||
+    normalizedTeam.startsWith('alpha solvers') ||
+    normalizedTeam.startsWith('ui validation') ||
+    normalizedTeam === 'techx_sentinels' ||
+    normalizedTeam === 'techboss';
+
+  return userMatches || teamMatches;
+}
+

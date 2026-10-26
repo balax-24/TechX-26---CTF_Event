@@ -1,6 +1,6 @@
 import { eq, sql, count } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { teams, teamMembers, users } from '../../db/schema.js';
+import { teams, teamMembers, users, teamSolves, challenges, categories } from '../../db/schema.js';
 import { generateInviteCode, hashInviteCode } from '../../utils/crypto.js';
 import { config } from '../../config/env.js';
 import { CreateTeamInput, JoinTeamInput } from './teams.schema.js';
@@ -13,15 +13,24 @@ export interface TeamMemberProfile {
   joinedAt: Date;
 }
 
+export interface TeamSolveResult {
+  challengeId: string;
+  challengeTitle: string;
+  category: string;
+  points: number;
+  solvedAt: Date;
+}
+
 export interface TeamDetailResult {
   id: string;
   name: string;
-  captainId: string;
+  captainId: string | null;
   score: number;
   isBanned: boolean;
   createdAt: Date;
   inviteCode?: string;
   members: TeamMemberProfile[];
+  solves?: TeamSolveResult[];
 }
 
 export class TeamsService {
@@ -202,6 +211,20 @@ export class TeamsService {
       .innerJoin(users, eq(teamMembers.userId, users.id))
       .where(eq(teamMembers.teamId, teamId));
 
+    const rawSolves = await db
+      .select({
+        challengeId: teamSolves.challengeId,
+        challengeTitle: challenges.title,
+        category: categories.name,
+        points: challenges.points,
+        solvedAt: teamSolves.solvedAt,
+      })
+      .from(teamSolves)
+      .innerJoin(challenges, eq(teamSolves.challengeId, challenges.id))
+      .innerJoin(categories, eq(challenges.categoryId, categories.id))
+      .where(eq(teamSolves.teamId, teamId))
+      .orderBy(sql`${teamSolves.solvedAt} DESC`);
+
     return {
       id: team.id,
       name: team.name,
@@ -215,6 +238,13 @@ export class TeamsService {
         email: isMemberOrAdmin ? m.email : undefined,
         role: m.role as 'captain' | 'member',
         joinedAt: m.joinedAt,
+      })),
+      solves: rawSolves.map((s) => ({
+        challengeId: s.challengeId,
+        challengeTitle: s.challengeTitle,
+        category: s.category,
+        points: s.points,
+        solvedAt: s.solvedAt,
       })),
     };
   }

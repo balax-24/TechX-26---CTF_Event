@@ -11,7 +11,6 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isAdmin: boolean;
   login: (data: { emailOrUsername: string; password: string }) => Promise<void>;
-  register: (data: { username: string; email: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   setTeam: (team: Team | null) => void;
@@ -60,14 +59,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async function initSession() {
       setIsLoading(true);
       try {
-        // Initialize CSRF token
-        await authApi.getCsrf().catch(() => null);
-
         // Fetch current session profile
         const res = await authApi.getProfile().catch(() => null);
         if (isMounted && res && res.success && res.user) {
           setUser(res.user);
           setTeamState(res.team);
+          // If valid session exists, ensure CSRF token is synchronized
+          await authApi.getCsrf().catch(() => null);
         }
       } finally {
         if (isMounted) {
@@ -90,14 +88,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(res.user);
     setTeamState(res.team);
     showToast(`Welcome back, ${res.user.username}!`, 'success');
-  };
-
-  const register = async (data: { username: string; email: string; password: string }) => {
-    clearCachedCsrfToken(); // Invalidate any previous session token
-    const res = await authApi.register(data);
-    setUser(res.user);
-    setTeamState(res.team);
-    showToast(`Account created successfully! Welcome to TechX CTF, ${res.user.username}.`, 'success');
   };
 
   const logout = async () => {
@@ -125,7 +115,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated,
         isAdmin,
         login,
-        register,
         logout,
         refreshProfile,
         setTeam,

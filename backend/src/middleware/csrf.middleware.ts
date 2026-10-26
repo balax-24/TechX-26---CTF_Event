@@ -1,6 +1,7 @@
 import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../config/env.js';
+import { isAllowedOrigin } from '../utils/origin.js';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -63,18 +64,8 @@ export async function csrfProtection(req: FastifyRequest, reply: FastifyReply): 
 
     // A. Origin verification
     if (origin) {
-      try {
-        const originUrl = new URL(origin);
-        const originHost = originUrl.origin;
-        const isAllowed =
-          allowedOrigins.includes('*') ||
-          allowedOrigins.some((allowed) => allowed === originHost || allowed === origin);
-
-        if (!isAllowed) {
-          return reply.forbidden('CSRF_ORIGIN_INVALID: Cross-origin request not permitted');
-        }
-      } catch {
-        return reply.forbidden('CSRF_ORIGIN_MALFORMED: Invalid origin header');
+      if (!isAllowedOrigin(origin)) {
+        return reply.forbidden('CSRF_ORIGIN_INVALID: Cross-origin request not permitted');
       }
     } else if (config.NODE_ENV === 'production') {
       // In production browser environments, cookie mutations require Origin or Referer

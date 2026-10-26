@@ -11,16 +11,12 @@ export interface AuthResponse {
 }
 
 export const authApi = {
-  async register(data: { username: string; email: string; password: string }): Promise<AuthResponse> {
-    const res = await apiClient.post<AuthResponse>('/auth/register', data);
-    if (res.csrfToken) {
-      setCachedCsrfToken(res.csrfToken);
-    }
-    return res;
-  },
-
   async login(data: { emailOrUsername: string; password: string }): Promise<AuthResponse> {
-    const res = await apiClient.post<AuthResponse>('/auth/login', data);
+    const res = await apiClient.post<AuthResponse>('/auth/login', {
+      identifier: data.emailOrUsername,
+      emailOrUsername: data.emailOrUsername,
+      password: data.password,
+    });
     if (res.csrfToken) {
       setCachedCsrfToken(res.csrfToken);
     }

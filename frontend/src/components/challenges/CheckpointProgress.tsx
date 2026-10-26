@@ -29,22 +29,41 @@ export const CheckpointProgress: React.FC<CheckpointProgressProps> = ({
   // Sort by stepNumber ascending
   const sorted = [...checkpoints].sort((a, b) => a.stepNumber - b.stepNumber);
 
+  const isSubmittingRef = React.useRef<string | null>(null);
+
   const handleValidate = async (checkpoint: Checkpoint) => {
+    if (isSubmittingRef.current === checkpoint.id) return;
     const proof = proofInputs[checkpoint.id]?.trim();
+    if (!proof) return;
+
+    isSubmittingRef.current = checkpoint.id;
     setSubmittingId(checkpoint.id);
 
     try {
       const result = await checkpointsApi.validateCheckpoint(checkpoint.id, proof);
-      if (result.success && result.status === 'passed') {
-        showToast(`Checkpoint ${checkpoint.stepNumber} passed! +${result.pointsAwarded} pts`, 'success');
-        onCheckpointCompleted(checkpoint.id, result.newScore);
+      const isPassed =
+        result.status === 'correct' ||
+        result.status === 'passed' ||
+        (result.success && result.status !== 'incorrect' && result.status !== 'failed');
+
+      if (isPassed) {
+        showToast(
+          `Checkpoint ${checkpoint.stepNumber} passed! +${result.pointsAwarded ?? checkpoint.points} pts`,
+          'success'
+        );
+        onCheckpointCompleted(checkpoint.id, result.newScore || 0);
+        setProofInputs((prev) => ({ ...prev, [checkpoint.id]: '' }));
         await refreshProfile();
+      } else if (result.status === 'already_completed' || result.status === 'already_solved') {
+        showToast(`Checkpoint ${checkpoint.stepNumber} is already completed!`, 'info');
+        onCheckpointCompleted(checkpoint.id, result.newScore || 0);
       } else {
         showToast('Proof invalid or checkpoint not yet satisfied.', 'error');
       }
     } catch (err: any) {
       showToast(err.message || 'Checkpoint validation failed', 'error');
     } finally {
+      isSubmittingRef.current = null;
       setSubmittingId(null);
     }
   };
@@ -146,6 +165,12 @@ export const CheckpointProgress: React.FC<CheckpointProgressProps> = ({
                   onChange={(e) =>
                     setProofInputs((prev) => ({ ...prev, [cp.id]: e.target.value }))
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleValidate(cp);
+                    }
+                  }}
                   disabled={isDisabled || submittingId === cp.id}
                   style={{ flex: '1 1 200px', fontSize: '0.8rem', padding: '6px 10px' }}
                 />

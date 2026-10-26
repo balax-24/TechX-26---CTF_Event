@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { ChallengeDetail } from '../../types/api';
+import { ChallengeDetail, ChallengeInstance } from '../../types/api';
 import { challengesApi } from '../../api/challenges';
 import { Modal } from '../common/Modal';
 import { Badge, BadgeVariant } from '../common/Badge';
+import { getCategoryName } from '../../utils/category';
 import { SubmissionForm } from './SubmissionForm';
 import { CheckpointProgress } from './CheckpointProgress';
 import { HintCard } from './HintCard';
@@ -22,6 +23,11 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
   const [challenge, setChallenge] = useState<ChallengeDetail | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [instance, setInstance] = useState<ChallengeInstance | null>(null);
+  const [instanceLoading, setInstanceLoading] = useState(false);
+  const [instanceError, setInstanceError] = useState<string | null>(null);
+
+  const isIsolatedEnclave = challenge?.slug === 'dyn-cloud-sandbox';
 
   const loadChallenge = async (chSlug: string) => {
     setIsLoading(true);
@@ -43,6 +49,58 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
       setChallenge(null);
     }
   }, [slug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setInstance(null);
+    setInstanceError(null);
+
+    if (challenge?.slug === 'dyn-cloud-sandbox') {
+      challengesApi
+        .getChallengeInstance(challenge.slug)
+        .then((activeInstance) => {
+          if (!cancelled) setInstance(activeInstance);
+        })
+        .catch((err: any) => {
+          if (!cancelled) setInstanceError(err.message || 'Could not check sandbox status');
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [challenge?.slug]);
+
+  const startSandbox = async () => {
+    if (!challenge) return;
+    setInstanceLoading(true);
+    setInstanceError(null);
+    try {
+      const startedInstance = await challengesApi.startChallengeInstance(challenge.slug);
+      setInstance(startedInstance);
+    } catch (err: any) {
+      setInstanceError(err.message || 'Could not start the sandbox');
+    } finally {
+      setInstanceLoading(false);
+    }
+  };
+
+  const resetSandbox = async () => {
+    if (!challenge || !window.confirm('Reset your team’s Isolated Enclave sandbox? This replaces only your team’s current instance.')) {
+      return;
+    }
+
+    setInstanceLoading(true);
+    setInstanceError(null);
+    try {
+      const replacementInstance = await challengesApi.resetChallengeInstance(challenge.slug);
+      setInstance(replacementInstance);
+    } catch (err: any) {
+      setInstanceError(err.message || 'Could not reset the sandbox');
+    } finally {
+      setInstanceLoading(false);
+    }
+  };
 
   if (!slug) return null;
 
@@ -82,7 +140,7 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <Badge variant="neutral">{challenge.category}</Badge>
+              <Badge variant="neutral">{getCategoryName(challenge.category)}</Badge>
               <Badge variant={difficultyVariant[challenge.difficulty] || 'neutral'}>
                 {challenge.difficulty}
               </Badge>
@@ -159,6 +217,74 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
             </div>
           )}
 
+          {isIsolatedEnclave && (
+            <div
+              style={{
+                backgroundColor: 'var(--color-surface-sunken, #090B10)',
+                border: '1px solid var(--color-border, #262B3F)',
+                borderRadius: 'var(--radius-md, 8px)',
+                padding: '16px',
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: '8px' }}>Isolated Enclave sandbox</div>
+              <p style={{ margin: '0 0 12px', color: 'var(--color-text-muted, #64748B)' }}>
+                Start your team’s isolated sandbox. Your active instance is reused if you already have one.
+              </p>
+              <button
+                type="button"
+                onClick={startSandbox}
+                disabled={instanceLoading}
+                style={{
+                  padding: '9px 14px',
+                  border: '1px solid var(--color-brand, #6A1B9A)',
+                  borderRadius: 'var(--radius-sm, 2px)',
+                  backgroundColor: 'var(--color-brand, #6A1B9A)',
+                  color: '#fff',
+                  fontWeight: 700,
+                  cursor: instanceLoading ? 'wait' : 'pointer',
+                  opacity: instanceLoading ? 0.7 : 1,
+                }}
+              >
+                {instanceLoading ? 'Starting…' : instance?.status === 'RUNNING' ? 'Reconnect to sandbox' : 'Start sandbox'}
+              </button>
+              {instance?.status === 'RUNNING' && (
+                <button
+                  type="button"
+                  onClick={resetSandbox}
+                  disabled={instanceLoading}
+                  style={{
+                    marginLeft: '8px',
+                    padding: '9px 14px',
+                    border: '1px solid var(--color-border-light, #363D59)',
+                    borderRadius: 'var(--radius-sm, 2px)',
+                    backgroundColor: 'transparent',
+                    color: 'var(--color-text, #F8FAFC)',
+                    fontWeight: 700,
+                    cursor: instanceLoading ? 'wait' : 'pointer',
+                    opacity: instanceLoading ? 0.7 : 1,
+                  }}
+                >
+                  Reset sandbox
+                </button>
+              )}
+              {instance?.status === 'RUNNING' && (
+                <div style={{ marginTop: '12px' }}>
+                  <a href={instance.connectionUrl} target="_blank" rel="noreferrer">
+                    Open your sandbox
+                  </a>
+                  <div style={{ marginTop: '4px', color: 'var(--color-text-muted, #64748B)' }}>
+                    About {Math.ceil(instance.remainingTtlSeconds / 60)} minutes remaining
+                  </div>
+                </div>
+              )}
+              {instanceError && (
+                <div role="alert" style={{ marginTop: '10px', color: 'var(--color-danger, #EF4444)' }}>
+                  {instanceError}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* File Downloads */}
           {challenge.files && challenge.files.length > 0 && (
             <div>
@@ -194,7 +320,11 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
                       textDecoration: 'none',
                     }}
                   >
-                    <span aria-hidden="true">📥</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
                     <span>{file.filename}</span>
                   </a>
                 ))}
@@ -242,17 +372,19 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
                   challengeSlug={challenge.slug}
                   hint={hint}
                   onHintUnlocked={(unlocked) => {
+                    const targetId = unlocked.id || (unlocked as any).hintId;
                     setChallenge((prev) => {
                       if (!prev) return null;
                       return {
                         ...prev,
                         hints: prev.hints.map((h) =>
-                          h.id === unlocked.id
+                          h.id === targetId
                             ? { ...h, isUnlocked: true, content: unlocked.content }
                             : h
                         ),
                       };
                     });
+                    onSolve();
                   }}
                 />
               ))}
@@ -268,6 +400,7 @@ export const ChallengeModal: React.FC<ChallengeModalProps> = ({
           >
             <SubmissionForm
               challengeId={challenge.id}
+              challengeSlug={challenge.slug}
               isSolved={challenge.isSolved}
               onSolveSuccess={() => {
                 setChallenge((prev) => (prev ? { ...prev, isSolved: true } : null));

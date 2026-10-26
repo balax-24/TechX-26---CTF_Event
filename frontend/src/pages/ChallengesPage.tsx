@@ -1,16 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Challenge, Category } from '../types/api';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Challenge } from '../types/api';
 import { challengesApi } from '../api/challenges';
 import { ChallengeCard } from '../components/challenges/ChallengeCard';
 import { ChallengeModal } from '../components/challenges/ChallengeModal';
-import { LoadingSkeleton, ErrorState, EmptyState } from '../components/feedback/FeedbackStates';
-import { Button } from '../components/common/Button';
+import { LoadingSkeleton, ErrorState } from '../components/feedback/FeedbackStates';
+import { getCategoryName, getCategorySlug, matchesCategory } from '../utils/category';
+
+const STANDARD_CATEGORIES = ['ALL', 'WEB', 'CRYPTO', 'FORENSICS', 'REVERSE', 'PWN', 'OSINT'];
 
 export const ChallengesPage: React.FC = () => {
   const [challenges, setChallenges] = useState<Challenge[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -19,12 +21,8 @@ export const ChallengesPage: React.FC = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const [chalData, catData] = await Promise.all([
-        challengesApi.listChallenges(),
-        challengesApi.listCategories().catch(() => []),
-      ]);
+      const chalData = await challengesApi.listChallenges();
       setChallenges(chalData);
-      setCategories(catData);
     } catch (err: any) {
       setError(err.message || 'Failed to load challenge arena.');
     } finally {
@@ -36,18 +34,59 @@ export const ChallengesPage: React.FC = () => {
     loadData();
   }, [loadData]);
 
-  // Filter challenges locally by selected category and difficulty
-  const filteredChallenges = challenges.filter((chal) => {
-    const matchCategory =
-      selectedCategory === 'all' ||
-      chal.category.toLowerCase() === selectedCategory.toLowerCase();
-    const matchDifficulty =
-      selectedDifficulty === 'all' || chal.difficulty === selectedDifficulty;
-    return matchCategory && matchDifficulty;
-  });
+  // Dynamic categories combined with standard CTF categories
+  const categoriesList = useMemo(() => {
+    const list: string[] = ['ALL'];
+    const seen = new Set<string>(['ALL']);
+
+    STANDARD_CATEGORIES.forEach((cat) => {
+      if (!seen.has(cat)) {
+        list.push(cat);
+        seen.add(cat);
+      }
+    });
+
+    challenges.forEach((c) => {
+      const slug = getCategorySlug(c.category).toUpperCase();
+      const name = getCategoryName(c.category).toUpperCase();
+      const hasMatch = STANDARD_CATEGORIES.some((std) => matchesCategory(c.category, std));
+      if (!hasMatch) {
+        const key = slug || name;
+        if (key && !seen.has(key)) {
+          list.push(key);
+          seen.add(key);
+        }
+      }
+    });
+
+    return list;
+  }, [challenges]);
+
+  // Filter challenges locally
+  const filteredChallenges = useMemo(() => {
+    return challenges.filter((chal) => {
+      const matchCategory = matchesCategory(chal.category, selectedCategory);
+      const matchDifficulty =
+        selectedDifficulty === 'all' || chal.difficulty === selectedDifficulty;
+      const matchSearch =
+        !searchQuery.trim() ||
+        chal.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        getCategoryName(chal.category).toLowerCase().includes(searchQuery.toLowerCase()) ||
+        getCategorySlug(chal.category).toLowerCase().includes(searchQuery.toLowerCase());
+      return matchCategory && matchDifficulty && matchSearch;
+    });
+  }, [challenges, selectedCategory, selectedDifficulty, searchQuery]);
+
+  const totalPoints = useMemo(() => {
+    return challenges.reduce((sum, c) => sum + c.points, 0);
+  }, [challenges]);
+
+  const solvedCount = useMemo(() => {
+    return challenges.filter((c) => c.isSolved).length;
+  }, [challenges]);
 
   return (
-    <div className="container" style={{ padding: '32px 16px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div className="container" style={{ padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
       {/* Page Header */}
       <div
         style={{
@@ -56,105 +95,166 @@ export const ChallengesPage: React.FC = () => {
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '16px',
+          paddingBottom: '16px',
+          borderBottom: '1px solid var(--color-border, #1E2335)',
         }}
       >
         <div>
-          <h1 style={{ fontSize: 'var(--text-2xl, 1.5rem)', marginBottom: '4px' }}>
-            Challenge Arena
-          </h1>
-          <p style={{ fontSize: 'var(--text-sm, 0.875rem)' }}>
-            Select a challenge to inspect details, attachments, checkpoints, and submit flags.
-          </p>
-        </div>
-
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <select
-            value={selectedDifficulty}
-            onChange={(e) => setSelectedDifficulty(e.target.value)}
+          <div
+            className="font-mono"
             style={{
-              padding: '8px 12px',
-              backgroundColor: 'var(--color-surface, #161926)',
-              border: '1px solid var(--color-border, #262B3F)',
-              borderRadius: 'var(--radius-md, 8px)',
-              color: 'var(--color-text, #F8FAFC)',
-              fontSize: 'var(--text-sm, 0.875rem)',
-              cursor: 'pointer',
-              width: 'auto',
+              fontSize: '0.6875rem',
+              fontWeight: 700,
+              color: 'var(--color-brand-bright, #BA68C8)',
+              letterSpacing: '0.12em',
+              marginBottom: '4px',
             }}
           >
-            <option value="all">All Difficulties</option>
-            <option value="beginner">Beginner</option>
-            <option value="intermediate">Intermediate</option>
-            <option value="expert">Expert</option>
-          </select>
+            OPERATIONAL TARGETS
+          </div>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0, color: '#F8FAFC' }}>
+            CHALLENGES
+          </h1>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          <div
+            className="font-mono"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: 'var(--color-surface, #11141D)',
+              border: '1px solid var(--color-border, #1E2335)',
+              borderRadius: '2px',
+              fontSize: '0.75rem',
+              color: 'var(--color-text-secondary, #94A3B8)',
+            }}
+          >
+            TARGETS: <strong style={{ color: '#F8FAFC' }}>{challenges.length}</strong> &bull; TOTAL:{' '}
+            <strong style={{ color: 'var(--color-brand-bright, #BA68C8)' }}>{totalPoints} PTS</strong> &bull; SOLVED:{' '}
+            <strong style={{ color: 'var(--color-success, #10B981)' }}>{solvedCount}</strong>
+          </div>
+
+          <input
+            type="text"
+            placeholder="Search targets..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="font-mono"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: 'var(--color-surface, #11141D)',
+              border: '1px solid var(--color-border, #1E2335)',
+              borderRadius: '2px',
+              color: '#F8FAFC',
+              fontSize: '0.75rem',
+              width: '180px',
+              outline: 'none',
+            }}
+          />
         </div>
       </div>
 
-      {/* Category Filter Tabs */}
+      {/* Part 12 Category Filter Strip */}
       <div
         style={{
           display: 'flex',
           flexWrap: 'wrap',
-          gap: '8px',
-          borderBottom: '1px solid var(--color-border, #262B3F)',
-          paddingBottom: '12px',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '10px',
         }}
       >
-        <Button
-          size="sm"
-          variant={selectedCategory === 'all' ? 'primary' : 'ghost'}
-          onClick={() => setSelectedCategory('all')}
-        >
-          All Categories ({challenges.length})
-        </Button>
-        {categories.map((cat) => {
-          const count = challenges.filter(
-            (c) => c.category.toLowerCase() === cat.name.toLowerCase()
-          ).length;
-          return (
-            <Button
-              key={cat.id}
-              size="sm"
-              variant={selectedCategory.toLowerCase() === cat.name.toLowerCase() ? 'primary' : 'ghost'}
-              onClick={() => setSelectedCategory(cat.name)}
-            >
-              {cat.name} ({count})
-            </Button>
-          );
-        })}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {categoriesList.map((cat) => {
+            const count =
+              cat === 'ALL'
+                ? challenges.length
+                : challenges.filter((c) => matchesCategory(c.category, cat)).length;
+            const isSelected = selectedCategory === cat;
+
+            return (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className="font-mono"
+                style={{
+                  padding: '6px 12px',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  backgroundColor: isSelected ? 'var(--color-brand, #6A1B9A)' : 'var(--color-surface, #11141D)',
+                  color: isSelected ? '#FFFFFF' : 'var(--color-text-secondary, #94A3B8)',
+                  border: `1px solid ${isSelected ? 'var(--color-brand-bright, #BA68C8)' : 'var(--color-border, #1E2335)'}`,
+                  borderRadius: '2px',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                {cat} {count > 0 && <span style={{ opacity: 0.6 }}>({count})</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        <div>
+          <select
+            value={selectedDifficulty}
+            onChange={(e) => setSelectedDifficulty(e.target.value)}
+            className="font-mono"
+            style={{
+              padding: '6px 10px',
+              backgroundColor: 'var(--color-surface, #11141D)',
+              border: '1px solid var(--color-border, #1E2335)',
+              borderRadius: '2px',
+              color: '#F8FAFC',
+              fontSize: '0.75rem',
+              cursor: 'pointer',
+              outline: 'none',
+            }}
+          >
+            <option value="all">ALL DIFFICULTIES</option>
+            <option value="beginner">BEGINNER</option>
+            <option value="intermediate">INTERMEDIATE</option>
+            <option value="expert">EXPERT</option>
+          </select>
+        </div>
       </div>
 
-      {/* Challenges Grid / Feedback States */}
+      {/* Challenges Scan-Friendly Grid */}
       {isLoading ? (
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-            gap: '20px',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            gap: '12px',
           }}
         >
-          {Array.from({ length: 6 }).map((_, i) => (
-            <LoadingSkeleton key={i} height="180px" rows={1} />
+          {Array.from({ length: 8 }).map((_, i) => (
+            <LoadingSkeleton key={i} height="140px" rows={1} />
           ))}
         </div>
       ) : error ? (
-        <ErrorState
-          title="Could not load challenges"
-          message={error}
-          onRetry={loadData}
-        />
+        <ErrorState title="Failed to load challenge arena" message={error} onRetry={loadData} />
       ) : filteredChallenges.length === 0 ? (
-        <EmptyState
-          title="No challenges found"
-          message="No challenges currently match your active filters or release schedule."
-          icon="🎯"
-        />
+        <div
+          style={{
+            padding: '48px 24px',
+            textAlign: 'center',
+            backgroundColor: 'var(--color-surface, #11141D)',
+            border: '1px dashed var(--color-border, #1E2335)',
+            borderRadius: '2px',
+          }}
+        >
+          <p className="font-mono" style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted, #5A657D)', margin: 0 }}>
+            NO CHALLENGES MATCH SPECIFIED FILTERS
+          </p>
+        </div>
       ) : (
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-            gap: '20px',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            gap: '12px',
           }}
         >
           {filteredChallenges.map((chal) => (

@@ -31,7 +31,7 @@ export interface TeamMember {
 export interface TeamSolve {
   challengeId: string;
   challengeTitle: string;
-  category: string;
+  category?: string | { name: string; slug: string };
   points: number;
   solvedAt: string;
 }
@@ -84,7 +84,7 @@ export interface Challenge {
   id: string;
   slug: string;
   title: string;
-  category: string;
+  category: string | { name: string; slug: string };
   difficulty: ChallengeDifficulty;
   points: number;
   solveCount: number;
@@ -98,6 +98,16 @@ export interface ChallengeDetail extends Challenge {
   files: ChallengeFile[];
   hints: Hint[];
   checkpoints: Checkpoint[];
+}
+
+export interface ChallengeInstance {
+  id: string;
+  challengeSlug: string;
+  status: 'CREATING' | 'RUNNING' | 'STOPPING' | 'STOPPED' | 'EXPIRED' | 'FAILED';
+  connectionUrl: string;
+  expiresAt: string;
+  remainingTtlSeconds: number;
+  failureReason?: string | null;
 }
 
 export interface LeaderboardEntry {
@@ -147,9 +157,9 @@ export interface FlagSubmissionResult {
 }
 
 export interface CheckpointValidationResult {
-  success: boolean;
-  status: 'passed' | 'failed' | 'already_completed';
-  pointsAwarded: number;
-  newScore: number;
+  success?: boolean;
+  status: 'correct' | 'incorrect' | 'passed' | 'failed' | 'already_completed' | 'already_solved';
+  pointsAwarded?: number;
+  newScore?: number;
   message?: string;
 }

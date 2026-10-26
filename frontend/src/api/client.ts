@@ -87,7 +87,7 @@ export async function request<T = any>(
   }
 
   // Ensure CSRF token is attached for cookie-authenticated browser mutations
-  if (isMutation) {
+  if (isMutation && !endpoint.includes('/auth/login')) {
     let token = getCachedCsrfToken();
     if (!token) {
       token = await fetchCsrfToken();

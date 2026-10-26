@@ -23,7 +23,11 @@ export const HintCard: React.FC<HintCardProps> = ({
   const { refreshProfile } = useAuth();
   const { isPaused, isEnded } = useCompetition();
 
+  const isUnlockingRef = React.useRef(false);
+
   const handleUnlock = async () => {
+    if (isUnlockingRef.current) return;
+    isUnlockingRef.current = true;
     setIsUnlocking(true);
     try {
       const unlocked = await challengesApi.unlockHint(challengeSlug, hint.id);
@@ -33,6 +37,7 @@ export const HintCard: React.FC<HintCardProps> = ({
     } catch (err: any) {
       showToast(err.message || 'Failed to unlock hint', 'error');
     } finally {
+      isUnlockingRef.current = false;
       setIsUnlocking(false);
       setIsConfirming(false);
     }

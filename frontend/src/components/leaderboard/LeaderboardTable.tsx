@@ -1,7 +1,6 @@
 import React from 'react';
 import { LeaderboardEntry } from '../../types/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { Badge } from '../common/Badge';
 
 interface LeaderboardTableProps {
   entries: LeaderboardEntry[];
@@ -18,23 +17,79 @@ export const LeaderboardTable: React.FC<LeaderboardTableProps> = ({
 }) => {
   const { team } = useAuth();
 
-  const getRankBadge = (rank: number) => {
-    if (rank === 1) return <span style={{ color: '#FBBF24', fontWeight: 800 }}>🥇 1</span>;
-    if (rank === 2) return <span style={{ color: '#E2E8F0', fontWeight: 800 }}>🥈 2</span>;
-    if (rank === 3) return <span style={{ color: '#CD7F32', fontWeight: 800 }}>🥉 3</span>;
-    return <span style={{ color: 'var(--color-text-secondary, #94A3B8)', fontWeight: 600 }}>#{rank}</span>;
+  const renderRank = (rank: number) => {
+    const formatted = `#${String(rank).padStart(2, '0')}`;
+    if (rank === 1) {
+      return (
+        <span
+          className="font-mono"
+          style={{
+            fontWeight: 800,
+            color: '#EAB308',
+            backgroundColor: 'rgba(234, 179, 8, 0.1)',
+            padding: '2px 8px',
+            border: '1px solid rgba(234, 179, 8, 0.3)',
+            borderRadius: '2px',
+          }}
+        >
+          {formatted}
+        </span>
+      );
+    }
+    if (rank === 2) {
+      return (
+        <span
+          className="font-mono"
+          style={{
+            fontWeight: 800,
+            color: '#E2E8F0',
+            backgroundColor: 'rgba(226, 232, 240, 0.1)',
+            padding: '2px 8px',
+            border: '1px solid rgba(226, 232, 240, 0.3)',
+            borderRadius: '2px',
+          }}
+        >
+          {formatted}
+        </span>
+      );
+    }
+    if (rank === 3) {
+      return (
+        <span
+          className="font-mono"
+          style={{
+            fontWeight: 800,
+            color: '#F59E0B',
+            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            padding: '2px 8px',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            borderRadius: '2px',
+          }}
+        >
+          {formatted}
+        </span>
+      );
+    }
+    return (
+      <span className="font-mono" style={{ color: 'var(--color-text-muted, #5A657D)', fontWeight: 600 }}>
+        {formatted}
+      </span>
+    );
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {/* Realtime Stream Status Header */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          fontSize: 'var(--text-xs, 0.75rem)',
-          color: 'var(--color-text-muted, #64748B)',
+          fontSize: '0.75rem',
+          padding: '8px 12px',
+          backgroundColor: 'var(--color-surface, #11141D)',
+          border: '1px solid var(--color-border, #1E2335)',
+          borderRadius: '2px',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -49,27 +104,29 @@ export const LeaderboardTable: React.FC<LeaderboardTableProps> = ({
                 : isReconnecting
                 ? 'var(--color-warning, #F59E0B)'
                 : 'var(--color-danger, #EF4444)',
-              boxShadow: isConnected ? '0 0 8px #10B981' : undefined,
+              boxShadow: isConnected ? '0 0 6px #10B981' : undefined,
             }}
           />
-          <span>
+          <span className="font-mono" style={{ color: 'var(--color-text-secondary, #94A3B8)' }}>
             {isConnected
-              ? 'Real-Time Sync Active'
+              ? 'STREAM: REAL-TIME SSE CONNECTED'
               : isReconnecting
-              ? 'Reconnecting to stream...'
-              : 'Offline (Viewing snapshot)'}
+              ? 'STREAM: RECONNECTING TO LEDGER...'
+              : 'STREAM: OFFLINE (VIEWING SNAPSHOT)'}
           </span>
         </div>
-        <div className="font-mono">LEDGER V{version}</div>
+        <div className="font-mono" style={{ color: 'var(--color-text-muted, #5A657D)' }}>
+          AUTHORITATIVE LEDGER V{version}
+        </div>
       </div>
 
-      {/* Table Container */}
+      {/* Leaderboard Table Container */}
       <div
         style={{
           overflowX: 'auto',
-          backgroundColor: 'var(--color-surface, #161926)',
-          border: '1px solid var(--color-border, #262B3F)',
-          borderRadius: 'var(--radius-lg, 12px)',
+          backgroundColor: 'var(--color-surface, #11141D)',
+          border: '1px solid var(--color-border, #1E2335)',
+          borderRadius: 'var(--radius-sm, 2px)',
         }}
       >
         <table
@@ -77,23 +134,26 @@ export const LeaderboardTable: React.FC<LeaderboardTableProps> = ({
             width: '100%',
             borderCollapse: 'collapse',
             textAlign: 'left',
-            fontSize: 'var(--text-sm, 0.875rem)',
+            fontSize: '0.8125rem',
+            minWidth: '560px',
           }}
         >
           <thead>
             <tr
+              className="font-mono"
               style={{
-                borderBottom: '1px solid var(--color-border, #262B3F)',
-                color: 'var(--color-text-muted, #64748B)',
-                fontSize: 'var(--text-xs, 0.75rem)',
+                borderBottom: '1px solid var(--color-border, #1E2335)',
+                backgroundColor: 'var(--color-surface-sunken, #080A0F)',
+                color: 'var(--color-text-muted, #5A657D)',
+                fontSize: '0.6875rem',
                 textTransform: 'uppercase',
-                letterSpacing: '0.05em',
+                letterSpacing: '0.06em',
               }}
             >
-              <th style={{ padding: '16px 20px', width: '80px' }}>Rank</th>
-              <th style={{ padding: '16px 20px' }}>Team</th>
-              <th style={{ padding: '16px 20px', textAlign: 'right' }}>Score</th>
-              <th style={{ padding: '16px 20px', textAlign: 'right' }}>Last Activity</th>
+              <th style={{ padding: '12px 18px', width: '90px' }}>RANK</th>
+              <th style={{ padding: '12px 18px' }}>TEAM</th>
+              <th style={{ padding: '12px 18px', textAlign: 'right', width: '130px' }}>SCORE</th>
+              <th style={{ padding: '12px 18px', textAlign: 'right', width: '150px' }}>LAST SOLVE</th>
             </tr>
           </thead>
           <tbody>
@@ -104,50 +164,66 @@ export const LeaderboardTable: React.FC<LeaderboardTableProps> = ({
                 <tr
                   key={entry.teamId}
                   style={{
-                    borderBottom: '1px solid var(--color-border, #262B3F)',
-                    backgroundColor: isCurrentTeam
-                      ? 'var(--color-brand-muted, rgba(106, 27, 154, 0.15))'
-                      : 'transparent',
-                    transition: 'background-color var(--transition-fast)',
+                    borderBottom: '1px solid var(--color-border, #1E2335)',
+                    backgroundColor: isCurrentTeam ? 'rgba(106, 27, 154, 0.12)' : 'transparent',
+                    borderLeft: isCurrentTeam
+                      ? '3px solid var(--color-brand-bright, #BA68C8)'
+                      : '3px solid transparent',
+                    transition: 'background-color 0.15s ease',
                   }}
                 >
-                  <td style={{ padding: '16px 20px' }}>{getRankBadge(entry.rank)}</td>
-                  <td style={{ padding: '16px 20px' }}>
+                  <td style={{ padding: '12px 18px' }}>{renderRank(entry.rank)}</td>
+                  <td style={{ padding: '12px 18px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span
                         style={{
-                          fontWeight: isCurrentTeam ? 700 : 500,
-                          color: isCurrentTeam
-                            ? 'var(--color-brand-bright, #BA68C8)'
-                            : 'var(--color-text, #F8FAFC)',
+                          fontWeight: isCurrentTeam ? 700 : 600,
+                          color: isCurrentTeam ? '#FFFFFF' : '#E2E8F0',
+                          fontSize: '0.875rem',
                         }}
                       >
                         {entry.teamName}
                       </span>
                       {isCurrentTeam && (
-                        <Badge variant="brand" size="sm">
+                        <span
+                          className="font-mono"
+                          style={{
+                            fontSize: '0.625rem',
+                            fontWeight: 700,
+                            padding: '1px 6px',
+                            backgroundColor: 'var(--color-brand, #6A1B9A)',
+                            color: '#FFFFFF',
+                            borderRadius: '2px',
+                          }}
+                        >
                           YOU
-                        </Badge>
+                        </span>
                       )}
                     </div>
                   </td>
                   <td
                     className="font-mono"
                     style={{
-                      padding: '16px 20px',
+                      padding: '12px 18px',
                       textAlign: 'right',
-                      fontWeight: 700,
-                      color: 'var(--color-brand-bright, #BA68C8)',
+                      fontWeight: 800,
+                      color: isCurrentTeam
+                        ? 'var(--color-brand-bright, #BA68C8)'
+                        : '#F8FAFC',
                     }}
                   >
-                    {entry.score}
+                    {entry.score}{' '}
+                    <span style={{ fontSize: '0.6875rem', color: 'var(--color-text-muted, #5A657D)' }}>
+                      PTS
+                    </span>
                   </td>
                   <td
+                    className="font-mono"
                     style={{
-                      padding: '16px 20px',
+                      padding: '12px 18px',
                       textAlign: 'right',
-                      color: 'var(--color-text-muted, #64748B)',
-                      fontSize: 'var(--text-xs, 0.75rem)',
+                      color: 'var(--color-text-muted, #5A657D)',
+                      fontSize: '0.75rem',
                     }}
                   >
                     {entry.lastScoreAt

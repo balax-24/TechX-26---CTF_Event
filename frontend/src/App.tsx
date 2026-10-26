@@ -9,7 +9,6 @@ import { ProtectedRoute } from './components/common/ProtectedRoute';
 
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
-import { RegisterPage } from './pages/RegisterPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ChallengesPage } from './pages/ChallengesPage';
 import { LeaderboardPage } from './pages/LeaderboardPage';
@@ -27,7 +26,6 @@ export const App: React.FC = () => {
                   {/* Public Routes */}
                   <Route path="/" element={<LandingPage />} />
                   <Route path="/login" element={<LoginPage />} />
-                  <Route path="/register" element={<RegisterPage />} />
                   <Route path="/leaderboard" element={<LeaderboardPage />} />
 
                   {/* Authenticated Participant Routes */}

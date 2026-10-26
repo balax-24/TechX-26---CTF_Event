@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { Challenge, ChallengeDetail, Category } from '../types/api';
+import { Challenge, ChallengeDetail, ChallengeInstance, Category } from '../types/api';
 
 export const challengesApi = {
   async listChallenges(category?: string, difficulty?: string): Promise<Challenge[]> {
@@ -21,6 +21,30 @@ export const challengesApi = {
     return res.challenge;
   },
 
+  async getChallengeInstance(slug: string): Promise<ChallengeInstance | null> {
+    const res = await apiClient.get<{
+      success: boolean;
+      instance: ChallengeInstance | null;
+    }>(`/challenges/${slug}/instance`);
+    return res.instance;
+  },
+
+  async startChallengeInstance(slug: string): Promise<ChallengeInstance> {
+    const res = await apiClient.post<{
+      success: boolean;
+      instance: ChallengeInstance;
+    }>(`/challenges/${slug}/instance`);
+    return res.instance;
+  },
+
+  async resetChallengeInstance(slug: string): Promise<ChallengeInstance> {
+    const res = await apiClient.post<{
+      success: boolean;
+      instance: ChallengeInstance;
+    }>(`/challenges/${slug}/instance/reset`);
+    return res.instance;
+  },
+
   async listCategories(): Promise<Category[]> {
     const res = await apiClient.get<{ success: boolean; categories: Category[] }>(
       '/categories'
@@ -28,10 +52,13 @@ export const challengesApi = {
     return res.categories;
   },
 
-  async unlockHint(slug: string, hintId: string): Promise<{ id: string; content: string; penaltyPoints: number }> {
+  async unlockHint(
+    slug: string,
+    hintId: string
+  ): Promise<{ id: string; hintId?: string; content: string; penaltyPoints: number; newTeamScore?: number }> {
     const res = await apiClient.post<{
       success: boolean;
-      hint: { id: string; content: string; penaltyPoints: number };
+      hint: { id: string; hintId?: string; content: string; penaltyPoints: number; newTeamScore?: number };
     }>(`/challenges/${slug}/hints/${hintId}/unlock`);
     return res.hint;
   },

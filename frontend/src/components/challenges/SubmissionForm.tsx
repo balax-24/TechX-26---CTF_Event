@@ -8,12 +8,14 @@ import { useCompetition } from '../../contexts/CompetitionContext';
 
 interface SubmissionFormProps {
   challengeId: string;
+  challengeSlug?: string;
   isSolved?: boolean;
   onSolveSuccess: (pointsAwarded: number, newScore: number) => void;
 }
 
 export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   challengeId,
+  challengeSlug,
   isSolved = false,
   onSolveSuccess,
 }) => {
@@ -30,18 +32,25 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const isDisqualified = team?.status === 'DISQUALIFIED';
   const isDisabled = isSolved || isPaused || isEnded || isDisqualified || isSubmitting;
 
+  const isSubmittingRef = React.useRef(false);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
     const trimmed = flag.trim();
     if (!trimmed || isSubmitting) return;
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     setFeedback(null);
 
     try {
-      const result = await submissionsApi.submitFlag(challengeId, trimmed);
+      const result = challengeSlug
+        ? await submissionsApi.submitFlag(challengeId, trimmed, challengeSlug)
+        : await submissionsApi.submitFlag(challengeId, trimmed);
+      const isCorrect = result.status === 'correct';
 
-      if (result.success && result.status === 'correct') {
+      if (isCorrect) {
         setFeedback({
           type: 'success',
           message: `Challenge Solved! +${result.pointsAwarded} points awarded to your team.`,
@@ -73,6 +82,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         message,
       });
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };

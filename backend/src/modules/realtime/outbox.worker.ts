@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, inArray } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { scoreEventOutbox } from '../../db/schema.js';
 import { getRedisClient } from '../../cache/redis.js';
@@ -159,12 +159,13 @@ export class OutboxWorker {
 
         // Increment attempt_count and update last_attempt_at atomically during claim
         const ids = rows.map((r) => r.id);
-        await tx.execute(sql`
-          UPDATE ${scoreEventOutbox}
-          SET attempt_count = attempt_count + 1,
-              last_attempt_at = NOW()
-          WHERE id = ANY(${ids})
-        `);
+        await tx
+          .update(scoreEventOutbox)
+          .set({
+            attemptCount: sql`${scoreEventOutbox.attemptCount} + 1`,
+            lastAttemptAt: sql`NOW()`,
+          })
+          .where(inArray(scoreEventOutbox.id, ids));
 
         return rows;
       });

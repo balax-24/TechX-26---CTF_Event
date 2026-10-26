@@ -12,7 +12,11 @@
     "db:migrate": "node dist/db/migrate.js",
     "db:migrate:dev": "tsx src/db/migrate.ts",
     "bootstrap:admin": "node dist/scripts/bootstrap_admin.js",
-    "bootstrap:admin:dev": "tsx src/scripts/bootstrap_admin.ts"
+    "bootstrap:admin:dev": "tsx src/scripts/bootstrap_admin.ts",
+    "admin:provision-team": "node dist/scripts/provision_team.js",
+    "admin:provision-team:dev": "tsx src/scripts/provision_team.ts",
+    "admin:cleanup-test-team": "node dist/scripts/cleanup_test_team.js",
+    "admin:cleanup-test-team:dev": "tsx src/scripts/cleanup_test_team.ts"
   },
   "keywords": [
     "ctf",
@@ -24,7 +28,7 @@
     "redis"
   ],
   "author": "TechX CTF Engineering Team",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "dependencies": {
     "@fastify/cookie": "^9.3.1",
     "@fastify/cors": "^9.0.1",

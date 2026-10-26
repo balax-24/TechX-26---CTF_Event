@@ -2,12 +2,14 @@
   "name": "techx-ctf-platform",
   "version": "1.0.0",
   "private": true,
-  "description": "TechX CTF 2026 Core Platform",
+  "description": "TechX CTF Core Platform — Production-Grade Modular CTF Infrastructure",
+  "license": "MIT",
   "scripts": {
-    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build && npm --prefix admin-frontend run build",
     "test": "npm --prefix backend test && npm --prefix frontend test",
     "build:backend": "npm --prefix backend run build",
     "build:frontend": "npm --prefix frontend run build",
+    "build:admin": "npm --prefix admin-frontend run build",
     "test:backend": "npm --prefix backend test",
     "test:frontend": "npm --prefix frontend test"
   }

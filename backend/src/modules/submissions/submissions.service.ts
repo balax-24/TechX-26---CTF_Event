@@ -53,8 +53,12 @@ export class SubmissionsService {
     }
 
     // 3. Fetch challenge definition
+    const idCondition = input.challengeId
+      ? eq(challenges.id, input.challengeId)
+      : eq(challenges.slug, input.challengeSlug!);
+
     const conditions = [
-      eq(challenges.slug, input.challengeSlug),
+      idCondition,
       eq(challenges.status, 'published'),
       sql`(${challenges.releaseTime} IS NULL OR ${challenges.releaseTime} <= NOW())`,
     ];

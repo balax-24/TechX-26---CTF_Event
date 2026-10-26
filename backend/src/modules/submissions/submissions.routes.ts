@@ -44,13 +44,19 @@ export const submissionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           isAdmin,
         });
 
-        return reply.send(result);
+        return reply.send({
+          success: result.status === 'correct',
+          ...result,
+        });
       } catch (err: any) {
         if (err.message === 'COMPETITION_PAUSED') {
           return reply.forbidden('The competition is currently paused');
         }
         if (err.message === 'COMPETITION_ENDED' || err.message === 'COMPETITION_ARCHIVED') {
           return reply.forbidden('The competition has ended');
+        }
+        if (err.message === 'COMPETITION_NOT_STARTED') {
+          return reply.forbidden('The competition has not started yet');
         }
         if (err.message === 'COMPETITION_NOT_ACTIVE' || err.message === 'SUBMISSIONS_DISABLED') {
           return reply.forbidden('Submissions are not permitted at this time');
@@ -63,6 +69,9 @@ export const submissionRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         }
         if (err.message === 'TEAM_DISABLED') {
           return reply.forbidden('Team is currently disabled');
+        }
+        if (err.message === 'TEAM_NOT_FOUND') {
+          return reply.badRequest('Team not found or invalid');
         }
         if (err.message === 'CHALLENGE_NOT_FOUND') {
           return reply.notFound('Challenge not found or not yet released');

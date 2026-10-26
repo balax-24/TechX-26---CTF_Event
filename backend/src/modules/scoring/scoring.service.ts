@@ -182,8 +182,9 @@ export class ScoringService {
         );
 
       const checkpointPointsAlreadyAwarded = checkpointPointsResult?.totalAwarded || 0;
-      const pointsToAward = Math.max(0, chal.points - checkpointPointsAlreadyAwarded);
-      const newTeamScore = team.score + pointsToAward;
+      const isOfficialExemptTeam = (team.name || '').trim().toLowerCase() === 'internzz';
+      const pointsToAward = isOfficialExemptTeam ? 0 : Math.max(0, chal.points - checkpointPointsAlreadyAwarded);
+      const newTeamScore = isOfficialExemptTeam ? 0 : team.score + pointsToAward;
 
       // 4. Insert team solve record (Guaranteed unique by UNIQUE(team_id, challenge_id))
       await tx.insert(teamSolves).values({
@@ -443,9 +444,10 @@ export class ScoringService {
         );
 
       const alreadyAwarded = awardedCheckpointResult?.totalAwarded || 0;
+      const isOfficialExemptTeam = (team.name || '').trim().toLowerCase() === 'internzz';
       const maxAllowedForCheckpoint = Math.max(0, cp.challengePoints - alreadyAwarded);
-      const pointsAwarded = Math.min(cp.pointValue, maxAllowedForCheckpoint);
-      const newTeamScore = team.score + pointsAwarded;
+      const pointsAwarded = isOfficialExemptTeam ? 0 : Math.min(cp.pointValue, maxAllowedForCheckpoint);
+      const newTeamScore = isOfficialExemptTeam ? 0 : team.score + pointsAwarded;
 
       // 7. Record checkpoint progress (Guaranteed unique by UNIQUE(team_id, checkpoint_id))
       await tx.insert(checkpointProgress).values({
@@ -575,38 +577,7 @@ export class ScoringService {
     } | null = null;
 
     const result = await db.transaction(async (tx) => {
-      // 1. Check if hint is already unlocked
-      const [existing] = await tx
-        .select()
-        .from(teamHints)
-        .where(
-          and(
-            eq(teamHints.teamId, teamId),
-            eq(teamHints.hintId, hintId)
-          )
-        )
-        .for('update')
-        .limit(1);
-
-      const [hint] = await tx
-        .select()
-        .from(hints)
-        .where(eq(hints.id, hintId))
-        .limit(1);
-
-      if (!hint) {
-        throw new Error('HINT_NOT_FOUND');
-      }
-
-      if (existing) {
-        return {
-          alreadyUnlocked: true,
-          penaltyApplied: 0,
-          content: hint.content,
-        };
-      }
-
-      // 2. Lock team row
+      // 1. Lock team row first to serialize concurrent team operations
       const [team] = await tx
         .select({
           id: teams.id,
@@ -622,17 +593,48 @@ export class ScoringService {
         throw new Error('TEAM_NOT_FOUND');
       }
 
+      // 2. Fetch hint definition
+      const [hint] = await tx
+        .select()
+        .from(hints)
+        .where(eq(hints.id, hintId))
+        .limit(1);
+
+      if (!hint) {
+        throw new Error('HINT_NOT_FOUND');
+      }
+
+      // 3. Check if hint is already unlocked
+      const [existing] = await tx
+        .select()
+        .from(teamHints)
+        .where(
+          and(
+            eq(teamHints.teamId, teamId),
+            eq(teamHints.hintId, hintId)
+          )
+        )
+        .limit(1);
+
+      if (existing) {
+        return {
+          alreadyUnlocked: true,
+          penaltyApplied: 0,
+          content: hint.content,
+        };
+      }
+
       const penalty = hint.penaltyPoints;
       // Enforce minimum score floor = 0
       const newTeamScore = Math.max(0, team.score - penalty);
       const netDeduction = team.score - newTeamScore;
 
-      // 3. Insert team hint record
+      // 4. Insert team hint record
       await tx.insert(teamHints).values({
         teamId,
         hintId,
         unlockedByUserId: userId,
-      });
+      }).onConflictDoNothing();
 
       // 4. Record penalty in ledger if points deducted
       if (netDeduction > 0) {

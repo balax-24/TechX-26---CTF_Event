@@ -68,7 +68,9 @@ export class CompetitionService {
    */
   async isScoringAllowed(): Promise<boolean> {
     const current = await this.getCompetitionState();
-    return current.state === 'live' && current.isSubmissionEnabled;
+    const now = new Date();
+    const hasStarted = !current.startTime || now >= current.startTime;
+    return current.state === 'live' && current.isSubmissionEnabled && hasStarted;
   }
 
   /**
@@ -91,6 +93,11 @@ export class CompetitionService {
     }
     if (!current.isSubmissionEnabled) {
       throw new Error('SUBMISSIONS_DISABLED');
+    }
+
+    const now = new Date();
+    if (current.startTime && now < current.startTime) {
+      throw new Error('COMPETITION_NOT_STARTED');
     }
   }
 

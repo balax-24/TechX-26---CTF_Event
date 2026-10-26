@@ -198,6 +198,9 @@ function handleDomainError(err: any, reply: any, log: any) {
   if (msg === 'COMPETITION_ENDED' || msg === 'COMPETITION_ARCHIVED') {
     return reply.forbidden('The competition has ended');
   }
+  if (msg === 'COMPETITION_NOT_STARTED') {
+    return reply.forbidden('The competition has not started yet');
+  }
   if (msg === 'COMPETITION_NOT_ACTIVE' || msg === 'SUBMISSIONS_DISABLED') {
     return reply.forbidden('Challenge instances are not permitted at this time');
   }
@@ -206,6 +209,9 @@ function handleDomainError(err: any, reply: any, log: any) {
   }
   if (msg === 'TEAM_DISABLED') {
     return reply.forbidden('Team is currently disabled');
+  }
+  if (msg === 'TEAM_NOT_FOUND') {
+    return reply.badRequest('Team not found or invalid');
   }
   if (msg === 'ADMIN_PARTICIPATION_FORBIDDEN') {
     return reply.forbidden('Administrators cannot spawn participant challenge instances');

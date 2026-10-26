@@ -268,7 +268,15 @@ export class HttpChallengeGatewayClient implements IChallengeGatewayClient {
 
 // Active singleton instance of the gateway client
 let activeGatewayService = new ChallengeGatewayService();
-let activeGatewayClient: IChallengeGatewayClient = new DirectChallengeGatewayClient(activeGatewayService);
+const useDedicatedGateway =
+  process.env.NODE_ENV !== 'test' &&
+  Boolean(process.env.CHALLENGE_GATEWAY_URL && process.env.CHALLENGE_GATEWAY_SECRET);
+let activeGatewayClient: IChallengeGatewayClient = useDedicatedGateway
+  ? new HttpChallengeGatewayClient(
+      process.env.CHALLENGE_GATEWAY_URL,
+      process.env.CHALLENGE_GATEWAY_SECRET
+    )
+  : new DirectChallengeGatewayClient(activeGatewayService);
 
 export function getChallengeGatewayClient(): IChallengeGatewayClient {
   return activeGatewayClient;

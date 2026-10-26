@@ -154,6 +154,25 @@ export class DynamicChallengeRegistry {
       ttlSeconds: 1800,
       healthCheckPath: '/',
     });
+
+    // 4. Expert Container Enclave Sandbox (Isolated Enclave)
+    this.registerChallenge({
+      challengeId: '5e59896f-4640-485e-b282-82b59030ab8f',
+      slug: 'dyn-cloud-sandbox',
+      image: 'techx/isolated-enclave:20261014',
+      internalPort: 8080,
+      memoryLimitBytes: 256 * 1024 * 1024,
+      cpuLimitNano: 500_000_000,
+      pidsLimit: 64,
+      readOnlyRootfs: true,
+      tmpfsMounts: { '/tmp': 'rw,noexec,nosuid,size=32m' },
+      ttlSeconds: 1800,
+      healthCheckPath: '/health',
+      envAllowlist: {
+        APP_ENV: 'ctf',
+        RUNTIME_ESCAPE_FLAG: 'techx{dyn_c0nt41n3r_3sc4p3_succ3ss}',
+      },
+    });
   }
 }
 

@@ -43,7 +43,10 @@ export const checkpointRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           isAdmin,
         });
 
-        return reply.send(result);
+        return reply.send({
+          success: result.status === 'correct',
+          ...result,
+        });
       } catch (err: any) {
         if (err.message === 'COMPETITION_PAUSED') {
           return reply.forbidden('The competition is currently paused');
@@ -62,6 +65,9 @@ export const checkpointRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         }
         if (err.message === 'TEAM_DISABLED') {
           return reply.forbidden('Team is currently disabled');
+        }
+        if (err.message === 'TEAM_NOT_FOUND') {
+          return reply.badRequest('Team not found or invalid');
         }
         if (err.message === 'CHECKPOINT_NOT_FOUND') {
           return reply.notFound('Checkpoint not found');

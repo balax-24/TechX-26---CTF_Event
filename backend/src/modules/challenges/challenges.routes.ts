@@ -12,12 +12,17 @@ import { AuthUser } from '../../types/auth.js';
 import * as path from 'path';
 import * as fs from 'fs';
 
+import { challengeSandboxRoutes } from './challenge_sandbox.routes.js';
+
 const downloadFileParamsSchema = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/, 'Invalid challenge slug format'),
   fileId: z.string().uuid('Invalid file ID format'),
 });
 
 export const challengeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // Mount interactive sandbox challenge routes
+  await app.register(challengeSandboxRoutes);
+
   // Helper to extract optional authenticated user from request without throwing 401
   const getOptionalUser = (req: any): AuthUser | null => {
     let token: string | undefined;
@@ -136,8 +141,14 @@ export const challengeRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
         if (err.message === 'TEAM_DISABLED') {
           return reply.forbidden('Team is currently disabled');
         }
+        if (err.message === 'TEAM_NOT_FOUND') {
+          return reply.badRequest('Team not found or invalid');
+        }
         if (err.message === 'HINT_NOT_FOUND') {
           return reply.notFound('Hint not found for this challenge');
+        }
+        if (err.code === '23505') {
+          return reply.send({ success: true, hint: { alreadyUnlocked: true, penaltyPoints: 0 } });
         }
         req.log.error({ err }, 'Error unlocking hint');
         return reply.internalServerError('Failed to unlock hint');

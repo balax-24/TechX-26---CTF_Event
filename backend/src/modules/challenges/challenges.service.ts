@@ -294,6 +294,7 @@ export class ChallengesService {
         return {
           id: h.id,
           orderNumber: h.orderNumber,
+          hintNumber: h.orderNumber,
           penaltyPoints: h.penaltyPoints,
           isUnlocked,
           content: isUnlocked ? h.content : null, // Privacy & security guarantee
@@ -384,6 +385,7 @@ export class ChallengesService {
     });
 
     return {
+      id: hint.id,
       hintId: hint.id,
       content: result.content,
       penaltyPoints: result.penaltyApplied,

@@ -400,7 +400,7 @@ docker compose logs -f --tail=50 nginx
 
 ## 19. Event-Day Runbook Pointer
 
-Refer to [`docs/EVENT_DAY_RUNBOOK.md`](file:///d:/Projects/TechXMadras%2026/CTF/docs/EVENT_DAY_RUNBOOK.md) for the operator operational checklist before, during, and after the event.
+Refer to [`EVENT_DAY_RUNBOOK.md`](EVENT_DAY_RUNBOOK.md) for the operator operational checklist before, during, and after the event.
 
 ---
 

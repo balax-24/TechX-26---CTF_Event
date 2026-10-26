@@ -82,19 +82,19 @@ Print or keep this checklist open on the primary administrator operations consol
   ```
   Must output: `[✓] SUCCESS: All production smoke test assertions PASSED!`
 
-### 1.8 Administrator Login & Challenge Verification
-- [ ] Log in as superadmin via Admin UI or API:
-  ```bash
-  curl -s -X POST http://localhost/api/v1/auth/login \
-    -H "Content-Type: application/json" \
-    -d '{"identifier":"admin@techxmadras.org","password":"<ADMIN_PASSWORD>"}' | jq .
-  ```
-- [ ] Verify challenge definitions, categories, and point distributions:
-  ```bash
-  curl -s http://localhost/api/v1/challenges | jq .
-  ```
+### 1.8 Administrator Control Portal Verification (Port 8080)
+- [ ] Verify dedicated Admin Control Portal is online and separate from participant platform:
+  - Participant URL: `http://<SERVER_IP>/`
+  - Admin Portal URL: `http://<SERVER_IP>:8080/`
+- [ ] Log in as superadmin via Admin Portal:
+  - Primary Superadmin: `admin@techxmadras.org` (or configured `ADMIN_EMAIL`)
+  - If first login: complete forced password rotation on the security modal before proceeding.
+- [ ] Consult authoritative manual: [docs/admin_portal_guide.md](../../docs/admin_portal_guide.md) for detailed workflows.
+- [ ] Inspect **System Health** (Section 15) and **Leaderboard** (Section 10) to verify pre-event baseline.
+- [ ] Verify challenge definitions, categories, and point distributions in **Challenges** (Section 05).
 
 ---
+
 
 ## 2. EVENT START PROCEDURE (T-0)
 

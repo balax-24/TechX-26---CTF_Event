@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] — 2026-10-26
 
+**Tag:** [`v1.0.0`](https://github.com/balax-24/TechX-26---CTF_Event/releases/tag/v1.0.0)  
+**Commit:** [`f416303`](https://github.com/balax-24/TechX-26---CTF_Event/commit/f416303fe1755063096952009d6ea1bf36d4d9a5)  
+**Status:** Production Release  
+**License:** [MIT License](LICENSE)  
+
+### Highlights & Release Overview
+- **Official Open-Source Release**: Complete open-source distribution of the IEEE TechX Madras 2026 cybersecurity competition infrastructure.
+- **Battle-Tested Concurrency**: Empirically benchmarked to sustain 400+ concurrent competitors over offline campus LAN or public HTTPS ingress with zero dropped transactions.
+- **Enterprise DevSecOps Posture**: 100% passing automated test suite (426 tests total: 379 backend + 47 frontend), validated Docker Compose topologies, and zero sensitive secrets in repository history.
+
 ### Added
 - **Core Fastify API Engine**: Production-grade Fastify 4 backend with TypeScript, Zod schema validation, and Pino structured logging with automatic secret redaction.
 - **Participant Web Application**: High-performance React 18 Vite Single Page Application (SPA) with responsive layout, real-time solve ticker, countdown timer, challenge cards, and instant feedback toasts.

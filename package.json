@@ -2,7 +2,34 @@
   "name": "techx-ctf-platform",
   "version": "1.0.0",
   "private": true,
-  "description": "TechX CTF Core Platform — Production-Grade Modular CTF Infrastructure",
+  "description": "Production-grade, high-concurrency open-source Capture The Flag (CTF) competition platform featuring real-time SSE leaderboards, isolated dynamic challenges, Fastify backend, and React participant & admin portals.",
+  "keywords": [
+    "ctf",
+    "capture-the-flag",
+    "cybersecurity",
+    "infosec",
+    "fastify",
+    "react",
+    "typescript",
+    "postgresql",
+    "redis",
+    "docker",
+    "docker-compose",
+    "sse",
+    "realtime-leaderboard",
+    "hackathon",
+    "security-competition",
+    "mit-license"
+  ],
+  "homepage": "https://github.com/balax-24/TechX-26---CTF_Event#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/balax-24/TechX-26---CTF_Event.git"
+  },
+  "bugs": {
+    "url": "https://github.com/balax-24/TechX-26---CTF_Event/issues"
+  },
+  "author": "TechX Madras",
   "license": "MIT",
   "scripts": {
     "build": "npm --prefix backend run build && npm --prefix frontend run build && npm --prefix admin-frontend run build",

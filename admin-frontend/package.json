@@ -2,7 +2,15 @@
   "name": "techx-ctf-admin-portal",
   "private": true,
   "version": "1.0.0",
+  "description": "Standalone operations and moderation control plane portal for TechX CTF administrators",
   "license": "MIT",
+  "keywords": [
+    "ctf-admin",
+    "react",
+    "vite",
+    "typescript",
+    "operations-portal"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite --port 8080",

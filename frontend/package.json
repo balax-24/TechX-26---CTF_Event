@@ -2,7 +2,16 @@
   "name": "techx-ctf-frontend",
   "private": true,
   "version": "1.0.0",
+  "description": "High-performance React 18 participant web portal for TechX CTF",
   "license": "MIT",
+  "keywords": [
+    "ctf-frontend",
+    "react",
+    "vite",
+    "typescript",
+    "realtime-leaderboard",
+    "sse"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite",

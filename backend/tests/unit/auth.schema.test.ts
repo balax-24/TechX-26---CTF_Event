@@ -65,6 +65,26 @@ describe('Validation Schemas', () => {
       expect(valid2.success).toBe(true);
     });
 
+    it('accepts login with emailOrUsername or username field from frontend/clients', () => {
+      const validFromFrontend = loginSchema.safeParse({
+        emailOrUsername: 'participant@example.com',
+        password: 'participantPassword123',
+      });
+      expect(validFromFrontend.success).toBe(true);
+      if (validFromFrontend.success) {
+        expect(validFromFrontend.data.identifier).toBe('participant@example.com');
+      }
+
+      const validUsername = loginSchema.safeParse({
+        username: 'cyber_warrior',
+        password: 'somePassword',
+      });
+      expect(validUsername.success).toBe(true);
+      if (validUsername.success) {
+        expect(validUsername.data.identifier).toBe('cyber_warrior');
+      }
+    });
+
     it('rejects empty credentials', () => {
       const invalid = loginSchema.safeParse({
         identifier: '',

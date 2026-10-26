@@ -148,7 +148,7 @@ describe('Stage 9 Adversarial Audit & Security Hardening Test Suite', () => {
             password: 'ValidPassword123!',
           },
         });
-        expect([201, 400, 409, 500]).toContain(res.statusCode);
+        expect([201, 400, 403, 409, 500]).toContain(res.statusCode);
       }
 
       // 6th attempt is rate-limited with 429

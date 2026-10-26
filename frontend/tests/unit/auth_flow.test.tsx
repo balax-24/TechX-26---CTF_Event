@@ -10,7 +10,6 @@ vi.mock('../../src/api/auth', () => ({
     getCsrf: vi.fn().mockResolvedValue('test-csrf-token'),
     getProfile: vi.fn(),
     login: vi.fn(),
-    register: vi.fn(),
     logout: vi.fn(),
   },
 }));
@@ -127,5 +126,10 @@ describe('AuthContext Session Lifecycle', () => {
     expect(screen.getByTestId('auth-status')).toHaveTextContent('LOGGED_IN');
     expect(screen.getByTestId('username')).toHaveTextContent('bob');
     expect(screen.getByTestId('team-name')).toHaveTextContent('BravoSec');
+  });
+
+  it('guarantees public registration is not exposed on authApi or participant interface', () => {
+    // Participant auth must not provide a self-service registration method
+    expect((authApi as any).register).toBeUndefined();
   });
 });

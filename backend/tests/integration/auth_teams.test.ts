@@ -42,20 +42,21 @@ describe('Auth & Team Integration Endpoints', () => {
   // AUTH TESTS
   // ---------------------------------------------------------------------------
   describe('Authentication Routes', () => {
-    it('POST /api/v1/auth/register rejects invalid inputs with 400', async () => {
+    it('POST /api/v1/auth/register is disabled and rejects public attempts with 403 Forbidden', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/register',
         payload: {
-          username: 'u', // too short
-          email: 'invalid-email',
-          password: '123', // too short
+          username: 'participant_user',
+          email: 'user@techxmadras.org',
+          password: 'SecretPassword123!',
         },
       });
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(403);
       const payload = JSON.parse(response.payload);
-      expect(payload.message).toBeDefined();
+      expect(payload.code).toBe('PUBLIC_REGISTRATION_DISABLED');
+      expect(payload.message).toContain('Public registration is disabled');
     });
 
     it('POST /api/v1/auth/login rejects empty credentials with 400', async () => {
@@ -121,17 +122,19 @@ describe('Auth & Team Integration Endpoints', () => {
       expect(response.statusCode).toBe(401);
     });
 
-    it('POST /api/v1/teams rejects malformed team name with 400', async () => {
+    it('POST /api/v1/teams is disabled and rejects participant attempts with 403 Forbidden', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/teams',
         headers: {
           authorization: `Bearer ${testUserToken}`,
         },
-        payload: { name: '!' }, // too short & invalid chars
+        payload: { name: 'HackersUnited' },
       });
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(403);
+      const payload = JSON.parse(response.payload);
+      expect(payload.code).toBe('TEAM_CREATION_DISABLED');
     });
 
     it('POST /api/v1/teams/join rejects unauthenticated requests with 401', async () => {
@@ -158,16 +161,18 @@ describe('Auth & Team Integration Endpoints', () => {
       expect(payload.message).toContain('You must be a member of a team');
     });
 
-    it('POST /api/v1/teams/leave rejects users without a team with 400', async () => {
+    it('POST /api/v1/teams/leave is disabled and rejects participant attempts with 403 Forbidden', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/teams/leave',
         headers: {
-          authorization: `Bearer ${testUserToken}`,
+          authorization: `Bearer ${teamMemberToken}`,
         },
       });
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(403);
+      const payload = JSON.parse(response.payload);
+      expect(payload.code).toBe('TEAM_LEAVE_DISABLED');
     });
 
     it('GET /api/v1/teams allows fetching public team directory', async () => {

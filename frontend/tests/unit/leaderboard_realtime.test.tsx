@@ -160,6 +160,7 @@ describe('Leaderboard Realtime SSE & Monotonic Gap Recovery', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('version')).toHaveTextContent('20');
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
     });
 
     const es = MockEventSource.instances[0];
@@ -213,6 +214,7 @@ describe('Leaderboard Realtime SSE & Monotonic Gap Recovery', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('version')).toHaveTextContent('50');
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
     });
 
     const es = MockEventSource.instances[0];
